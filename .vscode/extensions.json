@@ -1,0 +1,11 @@
+{
+    "recommendations": [
+        "github.vscode-github-actions",
+        "1yib.rust-bundle",
+        "rust-lang.rust-analyzer",
+        "redhat.vscode-yaml",
+        "vadimcn.vscode-lldb",
+        "tamasfe.even-better-toml",
+        "usernamehw.errorlens"
+    ]
+}

@@ -2,7 +2,29 @@
 name = "checkle"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+readme = "README.md"
+description = "Extremely fast checksum runner for arbitrarily large batches of files"
+repository = "https://github.com/nrminor/checkle"
+homepage = "https://github.com/nrminor/checkle"
+documentation = "https://github.com/nrminor/checkle/blob/main/README.md"
+keywords = ["science", "reproducibility", "bioinformatics", "data"]
+categories = ["command-line-utilities", "science"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "checkle"
+path = "src/main.rs"
 
 [dependencies]
+anyhow = "1.0.75"
+md5 = "0.7.0"
+clap = { version = "4.4.3", features = ["derive", "cargo"]}
+clap-verbosity-flag = "2.1.1"
+ctrlc = "3.4.2"
+derive-new = "0.6.0"
+displaydoc = "0.2.4"
+tokio = { version = "1.35.1", features = ["full"] }
+futures = "0.3.28"
+
+[profile.release]
+lto = true

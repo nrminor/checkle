@@ -1,0 +1,32 @@
+name: Open Source Starter Files
+
+on: [push]
+
+jobs:
+  check-files:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Check for .gitignore
+      run: |
+        if [ ! -f .gitignore ]; then
+          echo ".gitignore file is missing."
+          exit 1
+        fi
+
+    - name: Check for README.md
+      run: |
+        if [ ! -f README.md ]; then
+          echo "README.md file is missing."
+          exit 1
+        fi
+
+    - name: Check for LICENSE
+      run: |
+        if [ ! -f LICENSE ]; then
+          echo "LICENSE file is missing."
+          exit 1
+        fi
