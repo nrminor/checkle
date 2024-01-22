@@ -1,4 +1,5 @@
 # checkle: Extremely fast checksum runner for arbitrarily large batches of files
+It checks so fast it will make you chuckle.
 
 `checkle` has the following goals:
 1. Find all recently transferred files based on a set of file attribute filters
