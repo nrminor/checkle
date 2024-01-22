@@ -4,9 +4,9 @@
 It checks files so fast it will make you chuckle.
 
 `checkle` aims to replace shell or Python `for`-loops that perform checksums on large batches of files transferred over the interwebs. It has the following goals:
-1. Find all recently transferred files based on a set of file attribute filters
+1. Find all recently transferred files based on a set of file attribute filters.
 2. Spread hashing across as many (virtual) cores as possible.
-3. If a manifest of checksums is provided, spread checksums across cores as well.
+3. If a manifest of hashes from the remote server is provided, spread post-transfer checksums across cores as well.
 4. Support md5 for backward compatibility along with a few cryptographically secure hashing functions.
 5. Be capable of reaching into `tar` and `zip` archives to checksum files without decompressing the whole archive.
 6. Minimize filesystem calls and memory allocations to maximize performance.
