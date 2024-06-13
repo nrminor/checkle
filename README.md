@@ -2,11 +2,11 @@
 
 [![Open Source Starter Files](https://github.com/nrminor/checkle/actions/workflows/open-source-starter.yml/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/open-source-starter.yml) [![Rust CI](https://github.com/nrminor/checkle/actions/workflows/rust-ci.yml/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/rust-ci.yml)
 
-A `checksum` utility for the multicore age. It's so much faster than the competititon it will make you chuckle.
+A `checksum` utility for the multicore age. It's (going to be) so much fast it will make you chuckle.
 
 ### Overview
 
-I work in genomics. This means I often transfer small handfuls of files from sequencing cores, where each file can be as much as a half-a-terabyte. As such, checking the integrity of these files post-transfer can be an arduous, time-consuming task. In my experience, bioinformaticians tackle this proble with shell or Python for loops that will run `checksum` or some other single-threaded utility—and wait as long as days for the integrity checks to finish before they get going with their analyses.
+I work in genomics. This means I often transfer small handfuls of files from sequencing cores, where each file can be as much as a half-a-terabyte. As such, checking the integrity of these files post-transfer can be an arduous, time-consuming task. In my experience, bioinformaticians tackle this problem with shell or Python for loops that will run `checksum` or some other single-threaded utility—and wait as long as days for the integrity checks to finish before they get going with their analyses.
 
 `checkle` aims to make this approach obsolete. It will perform checksums on large batches of exceptionally large files transferred over the interwebs, using [Merkle Trees](https://en.wikipedia.org/wiki/Merkle_tree) to accelerate hashing on multicore machines.
 
