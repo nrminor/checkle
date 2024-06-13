@@ -2,7 +2,7 @@
 
 [![Open Source Starter Files](https://github.com/nrminor/checkle/actions/workflows/open-source-starter.yml/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/open-source-starter.yml) [![Rust CI](https://github.com/nrminor/checkle/actions/workflows/rust-ci.yml/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/rust-ci.yml)
 
-A `checksum` utility for the multicore age. It's (going to be) so much fast it will make you chuckle.
+A `checksum` utility for the multicore age. It's (going to be) so fast it will make you chuckle.
 
 ### Overview
 
