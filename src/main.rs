@@ -1,8 +1,5 @@
-mod checksum;
-mod cli;
-mod filesystem;
-mod hashing;
+use color_eyre::eyre::Result;
 
-fn main() {
-    println!("Hello, world!");
+fn main() -> Result<()> {
+    Ok(())
 }
