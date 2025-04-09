@@ -7,14 +7,21 @@ use clap::{
     Error, Id, Parser, Subcommand,
 };
 
-pub const INFO: &str = r"
+pub const INFO: &str = r#"
+   ___    _  _     ___     ___    _  __    _       ___   
+  / __|  | || |   | __|   / __|  | |/ /   | |     | __|  
+ | (__   | __ |   | _|   | (__   | ' <    | |__   | _|   
+  \___|  |_||_|   |___|   \___|  |_|\_\   |____|  |___|  
+_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""| 
+"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-'"`-0-0-' 
+
 checkle (v0.1.0)
 ------------------------------------------------------------
 A `checksum` utility for the multicore age. `checkle` implements a Merkle hash
 digest tree with parallelized nodes to progressively hash large files in small
 chunks. It can be used to hash single files, hash lists of files, and generate
 new hashes for files to be checked later. Currently, it supports MD5 and SHA256.
-";
+"#;
 pub const VERSION: &str = "v0.1.0";
 
 #[derive(Parser)]
