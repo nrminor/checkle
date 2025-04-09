@@ -18,17 +18,33 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.4.3", features = ["derive", "cargo"]}
 clap-verbosity-flag = "2.1.1"
-ctrlc = "3.4.2"
-derive-new = "0.6.0"
 displaydoc = "0.2.4"
-tokio = { version = "1.35.1", features = ["full"] }
-futures = "0.3.28"
 sha2 = "0.10.8"
 base64ct = "1.6.0"
 color-eyre = "0.6.3"
 rayon = "1.10.0"
 digest = "0.10.7"
 md-5 = "0.10.6"
+thiserror = "2.0.12"
+fern = { version = "0.7.1", features = ["colored"] }
+log = "0.4.27"
+indicatif = { version = "0.17.11", features = ["rayon"] }
+jiff = { version = "0.2.6", features = ["logging"] }
+
+[profile.dev]
+incremental = true
+lto = false
 
 [profile.release]
-lto = true
+lto = "fat"
+opt-level = "z"
+codegen-units = 1
+incremental = true
+panic = "abort"
+strip = "symbols"
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+sccache = "0.10.0"
+tempfile = "3.19.1"
+
