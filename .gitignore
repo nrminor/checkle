@@ -1,5 +1,114 @@
-/target
+# =============================================================================
+# REVERSE-LOGIC .gitignore for checkle
+# =============================================================================
+# 
+# This project uses REVERSE LOGIC for .gitignore
+# 1. Everything is ignored by default with /*
+# 2. Specific files and patterns are then explicitly allowed with !
+# 3. This prevents accidentally committing unwanted files
+# 4. Be explicit - avoid wildcards unless for specific file extensions
+#
+# To add a new file to version control:
+# - Add an explicit allow rule (!filename or !pattern)
+# - For directories, list each subdirectory and file explicitly
+# - Only use wildcards for specific file extensions (e.g., *.rs)
+#
+# =============================================================================
 
-.DS_Store
-._*
-Cargo.lock
+# -----------------------------------------------------------------------------
+# Ignore everything by default
+# -----------------------------------------------------------------------------
+/*
+
+# -----------------------------------------------------------------------------
+# Core Project Files
+# These are the essential files that define the project
+# -----------------------------------------------------------------------------
+!/.gitignore
+!/README.md
+!/LICENSE
+!/AGENTS.md
+!/Cargo.toml
+!/Cargo.lock
+!/justfile
+!/flake.nix
+!/.envrc
+
+# -----------------------------------------------------------------------------
+# Source Code
+# All Rust source files in the src directory
+# -----------------------------------------------------------------------------
+!/src/
+!/src/*.rs
+!/src/errors.rs
+!/src/main.rs
+!/src/lib.rs
+!/src/cli.rs
+!/src/hashing.rs
+!/src/io.rs
+!/src/prelude.rs
+
+# -----------------------------------------------------------------------------
+# Tests
+# Test directory structure and files
+# -----------------------------------------------------------------------------
+!/tests/
+!/tests/verify_hashes.sh
+!/tests/data/
+!/tests/data/empty.txt
+!/tests/data/single_line.txt
+!/tests/data/multiline.txt
+!/tests/data/special_chars.txt
+!/tests/data/genomics_sample.fasta
+!/tests/data/binary_1kb.bin
+!/tests/data/binary_1mb.bin
+!/tests/data/all_zeros_10kb.bin
+# Trusted hash files for tests
+!/tests/data/empty.txt.md5
+!/tests/data/empty.txt.sha256
+!/tests/data/single_line.txt.md5
+!/tests/data/single_line.txt.sha256
+!/tests/data/multiline.txt.md5
+!/tests/data/multiline.txt.sha256
+!/tests/data/special_chars.txt.md5
+!/tests/data/special_chars.txt.sha256
+!/tests/data/genomics_sample.fasta.md5
+!/tests/data/genomics_sample.fasta.sha256
+!/tests/data/binary_1kb.bin.md5
+!/tests/data/binary_1kb.bin.sha256
+!/tests/data/binary_1mb.bin.md5
+!/tests/data/binary_1mb.bin.sha256
+!/tests/data/all_zeros_10kb.bin.md5
+!/tests/data/all_zeros_10kb.bin.sha256
+
+# -----------------------------------------------------------------------------
+# Benchmarks
+# Benchmark scripts and test data
+# -----------------------------------------------------------------------------
+!/benches/
+!/benches/benchmark_checksums.sh
+!/benches/test_data/
+# Note: large generated benchmark data files are not tracked
+
+# -----------------------------------------------------------------------------
+# Documentation
+# Project documentation files
+# -----------------------------------------------------------------------------
+!/docs/
+
+# -----------------------------------------------------------------------------
+# CI/CD Configuration
+# GitHub Actions workflows
+# -----------------------------------------------------------------------------
+!/.github/
+!/.github/workflows/
+!/.github/workflows/*.yml
+
+# -----------------------------------------------------------------------------
+# Development Configuration
+# Config files for development tools
+# -----------------------------------------------------------------------------
+!/.editorconfig
+!/.rustfmt.toml
+!/clippy.toml
+!/rust-toolchain.toml
