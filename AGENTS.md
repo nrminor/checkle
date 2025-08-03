@@ -517,6 +517,8 @@ naturally emerges in a feature-rich CLI tool.
 - **fern** (0.7.1) - Logging configuration with colors. Provides structured, readable log output
 - **log** (0.4.27) - Logging facade. Standard Rust logging interface
 - **jiff** (0.2.6) - Time handling for timestamps. More robust than chrono for timestamp formatting
+- **ignore** (0.4.23) - Recursive directory traversal. Powers ripgrep's file walking, respects .gitignore
+- **indicatif** (0.17.9) - Progress bars for better UX. Essential for large file operations
 
 #### Dev Dependencies (Test Only)
 - **pretty_assertions** (1.4.1) - Better test assertion output. Improves debugging experience

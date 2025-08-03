@@ -40,14 +40,15 @@ alias i := install
 # ===== Quality Checks =====
 
 # Run all tests
+# Note: Uses --test-threads=1 to avoid conflicts with the shared checksum.txt file
 [group('test')]
 test:
-    cargo test --all
+    cargo test --all -- --test-threads=1
 
 # Run tests with output displayed
 [group('test')]
 test-verbose:
-    cargo test --all -- --nocapture
+    cargo test --all -- --test-threads=1 --nocapture
 
 # Run a specific test by name
 [group('test')]
@@ -195,7 +196,7 @@ verify-hashes:
     @echo "Running hash verification tests..."
     ./tests/verify_hashes.sh
 
-# Run all tests including hash verification
+# Run all tests including hash verification (single-threaded to avoid file conflicts)
 [group('test')]
 test-all: test verify-hashes
     @echo "✓ All tests completed!"

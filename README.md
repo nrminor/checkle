@@ -1,6 +1,6 @@
 # checkle: Extremely fast checksum runner for arbitrarily large batches of large files
 
-A `checksum` utility for the multicore age. It's so fast it will make you
+A `checksum` utility for the multicore era. It's so fast it will make you
 chuckle.
 
 ### Overview
@@ -8,14 +8,15 @@ chuckle.
 I work in genomics. This means I often transfer handfuls of files from
 sequencing cores, where each file can be as much as a half-a-terabyte. As such,
 checking the integrity of these files post-transfer can be an arduous,
-time-consuming task. In my experience, bioinformaticians typically stay in their
-comfort zone when tackling this problem, using shell or Python for loops to run
-`checksum` or some other single-threaded utility and wait however long it takes
-for the integrity checks to finish. This process can be agonizingly and
-needlessly slow, as modern CPUs come with the ability to spread computations
-across cores and use "wide" SIMD operations on each. It also leaves some
-additional optimizations made possible by SSD storage on the table. We can do
-better and get to the fun part--analyzing data and doing science--faster.
+time-consuming task. To run checksums, it's not unusual to stay in one's
+scripting comfort zone, write a shell or Python for loop, and run `checksum` or
+some other single-threaded utility on a file in each iteration, waiting however
+long it takes for the serial integrity checks to finish. This process can be
+agonizingly slow, and without good reason: modern CPUs come with the ability to
+spread computations across cores and use "wide" SIMD operations on each.
+Traditional checksum utilities also leave some additional optimizations made
+possible by SSD storage on the table. We can do better and get to the fun
+part--analyzing data and doing science--faster.
 
 `checkle` aims to make slow, serial checksums obsolete and bring file integrity
 checks into the multicore era. It performs parallelized checksums on batches of
@@ -27,11 +28,14 @@ accelerate hashing on multicore machines.
 ### Features
 
 - Equivalent but modernized user experience to `checksum`
-- Support for running checks on files within TAR and ZIP archives without
-  extracting files from them
 - Each file is hashed in parallel chunks; in total, the time to check a single
   file will be close to a function of the file size divided by your number of
   cores
+- Many files throughout a file hierachically can be hashed or checked
+  recursively, with optional include or exclude filters to hash just the files
+  you're interested in
+- Support for running checks on files _within_ TAR and ZIP archives without
+  extracting and decompressing files from them (WIP!)
 - Check successes and failures can be pretty-printed to standard output or
   written as CSV or JSON
 - Multiple hashing algorithms including SHA2 and MD5 are supported
@@ -53,7 +57,7 @@ I have the following goals for `checkle`:
       [`clap`](https://docs.rs/clap/latest/clap/).
 - [ ] Be easy to install through [crates.io](https://crates.io/) as well as with
       binaries for your platform of choice distributed in this repo.
-- [ ] Pretty-print a report to `stdout` on which files should be re-transferred.
+- [x] Pretty-print a report to `stderr` on which files should be re-transferred.
 
 `checkle` will be made available on [crates.io](https://crates.io/) when it
 reaches a reasonable level of stability.

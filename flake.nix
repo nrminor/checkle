@@ -69,6 +69,14 @@
             xxHash     # extremely fast hash algorithm
             b3sum      # BLAKE3 hash (very fast)
             
+            # Search and navigation tools
+            ripgrep
+            fzf
+            tree
+            
+            # TOML formatter
+            taplo
+            
             # For direnv
             direnv
             nix-direnv

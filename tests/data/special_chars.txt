@@ -1,0 +1,6 @@
+Special characters: !@#$%^&*()_+-={}[]|:";'<>?,./~`
+Unicode: 你好世界 🚀 ñ é ü
+Tabs:	between	these	words
+Line breaks follow...
+
+...after empty line

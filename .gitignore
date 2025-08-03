@@ -1,7 +1,7 @@
 # =============================================================================
 # REVERSE-LOGIC .gitignore for checkle
 # =============================================================================
-# 
+#
 # This project uses REVERSE LOGIC for .gitignore
 # 1. Everything is ignored by default with /*
 # 2. Specific files and patterns are then explicitly allowed with !
@@ -32,7 +32,9 @@
 !/Cargo.lock
 !/justfile
 !/flake.nix
+!/flake.lock
 !/.envrc
+!/.pre-commit-config.yaml
 
 # -----------------------------------------------------------------------------
 # Source Code
@@ -53,6 +55,7 @@
 # Test directory structure and files
 # -----------------------------------------------------------------------------
 !/tests/
+!/tests/README.md
 !/tests/verify_hashes.sh
 !/tests/data/
 !/tests/data/empty.txt
@@ -86,15 +89,31 @@
 # Benchmark scripts and test data
 # -----------------------------------------------------------------------------
 !/benches/
+!/benches/README.md
 !/benches/benchmark_checksums.sh
 !/benches/test_data/
 # Note: large generated benchmark data files are not tracked
+
+# -----------------------------------------------------------------------------
+# Examples
+# Rust and command line usage examples
+# -----------------------------------------------------------------------------
+!/examples/
+!/examples/README.md
+!/examples/*.rs
 
 # -----------------------------------------------------------------------------
 # Documentation
 # Project documentation files
 # -----------------------------------------------------------------------------
 !/docs/
+
+# -----------------------------------------------------------------------------
+# Context
+# Additional context for LLM coding agents, usually in markdown format
+# -----------------------------------------------------------------------------
+!/context/
+!/context/*.md
 
 # -----------------------------------------------------------------------------
 # CI/CD Configuration
