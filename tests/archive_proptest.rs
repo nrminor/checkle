@@ -48,7 +48,7 @@ mod proptest_tests {
     #[cfg(feature = "tar")]
     proptest! {
         #[test]
-        #[ignore = "Archive implementation under investigation..."]
+        #[ignore = "CRITICAL BUG: TAR reading corrupts data - under investigation"]
         fn tar_roundtrip_preserves_content(
             files in files_strategy()
         ) {

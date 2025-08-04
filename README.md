@@ -33,7 +33,7 @@ directory traversal, multiple report formats, sophisticated logging, and more.
 
 ### Features
 
-- Equivalent but modernized user experience to `checksum`
+- Equivalent but modernized user experience to `md5sum` or `sha2sum`
 - Each file is hashed in parallel chunks; in total, the time to check a single
   file will be close to a function of the file size divided by your number of
   cores. And unlike other performant file integrity checkers, you don't need to
@@ -70,7 +70,8 @@ checkle verify-many --checksum-file checksums.md5
 
 #### Archive Support
 
-checkle provides comprehensive support for TAR (.tar, .tar.gz, .tar.bz2, .tar.xz, .tgz) and ZIP archives:
+checkle provides comprehensive support for TAR (.tar, .tar.gz, .tar.bz2,
+.tar.xz, .tgz) and ZIP archives:
 
 ```bash
 # Hash a specific file within an archive
