@@ -1,0 +1,20 @@
+[book]
+authors = ["Nicholas Minor"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Checkle Documentation"
+description = "Documentation for checkle - a fast and versatile file integrity checker"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/nickminor/checkle"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/nickminor/checkle/edit/main/docs/{path}"
+site-url = "/checkle/"
+cname = ""
+mathjax-support = false

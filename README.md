@@ -1,5 +1,10 @@
 # checkle: Extremely fast checksum runner for arbitrarily large batches of large files
 
+[![CI](https://github.com/nrminor/checkle/workflows/CI/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/ci.yml)
+[![Security Audit](https://github.com/nrminor/checkle/workflows/Security%20Audit/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/audit.yml)
+[![Release](https://github.com/nrminor/checkle/workflows/Release/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/release.yml)
+[![Documentation](https://img.shields.io/badge/docs-mdbook-blue)](https://nrminor.github.io/checkle/)
+
 A `checksum` utility for the multicore era. It's so fast it will make you
 chuckle.
 

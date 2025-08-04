@@ -1,10 +1,34 @@
 # SIMD Optimization Plan for Checkle
 
-This document presents the definitive SIMD optimization strategy for checkle, ranked by proportional value (benefit/complexity ratio). Since we are pre-1.0, we will replace scalar implementations entirely when switching to SIMD.
+This document presents the definitive SIMD optimization strategy for checkle,
+ranked by proportional value (benefit/complexity ratio). Since we are pre-1.0,
+we will replace scalar implementations entirely when switching to SIMD.
 
 ## Executive Summary
 
-SIMD optimization will provide 2-20x performance improvements for specific operations. We will use Rust nightly's `portable_simd` feature and replace scalar implementations completely for chosen operations.
+SIMD optimization will provide 2-20x performance improvements for specific
+operations. We will use Rust nightly's `portable_simd` feature and replace
+scalar implementations completely for chosen operations.
+
+## A Note on SIMD as a Feature
+
+SIMD acceleration is somewhat unusual as a feature in that it will be both
+visible and invisible to users. On its own, it's not really a "feature". But
+performance across the board is. Performance can take a routine, tedious task
+like running checksums--just another thing you have to do at work--into a
+delight. "It's already finished??" is an unalloyed good in a world of mediocre
+to bad software experiences. Performance can also be the difference between a
+tool being accessible to those without the privilege of using expensive
+computers as the current state-of-the-art. And even when they are, performance
+that's better than it needs to be means letting less of an expensive machine go
+to waste. Like paying for an expensive gym but not using it, paying for an
+expensive computer with many cores and SIMD capability but not using it is a
+waste.
+
+So when we go to implement SIMD acceleration, tedious though it may be, we do it
+to reduce waste, make CPU engineers' hard work worth it, and put a smile on our
+users' faces. We make this investment once upfront and then sit back as that
+investment pays dividends, over and over and over again.
 
 ## Ranked SIMD Implementations by Value
 
@@ -15,6 +39,7 @@ SIMD optimization will provide 2-20x performance improvements for specific opera
 **Impact**: Saves ~42ms per 1000 files. Every hash operation benefits.
 
 **Implementation**:
+
 ```rust
 #![feature(portable_simd)]
 use std::simd::{u8x32, Simd, SimdPartialOrd};
@@ -76,6 +101,7 @@ pub fn bytes_to_hex(bytes: &[u8]) -> String {
 **Impact**: Saves 19.6ms per 64MB buffer. Critical for large file operations.
 
 **Implementation**:
+
 ```rust
 #![feature(portable_simd)]
 use std::simd::{u8x64, u8x32, u8x16};
@@ -133,6 +159,7 @@ pub fn zero_buffer(buffer: &mut [u8]) {
 **Impact**: Saves 9ms per 10,000 verifications. Essential for batch operations.
 
 **Implementation**:
+
 ```rust
 #![feature(portable_simd)]
 use std::simd::{u8x32, Simd, SimdPartialOrd};
@@ -176,6 +203,7 @@ pub fn validate_hash(hash: &str, expected_len: usize) -> bool {
 **Impact**: Speeds up batch verification file parsing.
 
 **Implementation**:
+
 ```rust
 #![feature(portable_simd)]
 use std::simd::{u8x32, Simd, SimdPartialEq};
@@ -220,26 +248,31 @@ pub fn parse_checksum_line(line: &str) -> Option<(&str, &str)> {
 
 **Note**: Requires deeper integration with hash algorithms. Consider for v2.0.
 
-This would require creating SIMD-aware implementations of MD5/SHA256 or using crates that provide them.
+This would require creating SIMD-aware implementations of MD5/SHA256 or using
+crates that provide them.
 
 ## Implementation Timeline
 
 ### Week 1: Foundation
+
 1. Add `portable_simd` feature flag to Cargo.toml
 2. Set up nightly toolchain configuration
 3. Create benchmark suite for baseline measurements
 
 ### Week 2: Core Implementations
+
 1. Replace hex conversion implementation
 2. Replace buffer zeroing implementation
 3. Update all hash validation call sites
 
 ### Week 3: Integration & Testing
+
 1. Replace checksum file parsing
 2. Comprehensive correctness testing
 3. Performance validation across platforms
 
 ### Week 4: Polish
+
 1. Documentation updates
 2. Performance report generation
 3. CI/CD integration for nightly builds
@@ -247,6 +280,7 @@ This would require creating SIMD-aware implementations of MD5/SHA256 or using cr
 ## Technical Configuration
 
 ### Cargo.toml:
+
 ```toml
 [features]
 default = ["archives"]
@@ -258,6 +292,7 @@ simd = [] # Requires nightly toolchain
 ```
 
 ### rust-toolchain.toml:
+
 ```toml
 [toolchain]
 channel = "nightly-2024-01-01"
@@ -265,6 +300,7 @@ components = ["rust-src"]
 ```
 
 ### Build Configuration:
+
 ```bash
 # Enable SIMD optimizations
 cargo build --release --features simd
@@ -276,21 +312,25 @@ cargo build --release
 ## Performance Targets
 
 ### Hex Conversion
+
 - **Current**: ~50μs per hash (32 bytes)
 - **Target**: ~8μs per hash
 - **Validation**: Benchmark 10,000 conversions
 
 ### Buffer Zeroing
+
 - **Current**: 22.4ms per 64MB
 - **Target**: 2.8ms per 64MB
 - **Validation**: Benchmark with varying buffer sizes
 
 ### Hash Validation
+
 - **Current**: ~1μs per 64-char string
 - **Target**: ~0.1μs per 64-char string
 - **Validation**: Benchmark 100,000 validations
 
 ### Checksum Parsing
+
 - **Current**: ~200ns per line
 - **Target**: ~40ns per line
 - **Validation**: Parse 10,000 line checksum file
@@ -320,4 +360,9 @@ Once initial SIMD implementations prove successful:
 
 ## Conclusion
 
-SIMD optimization is a key differentiator for checkle. By focusing on high-value operations and completely replacing scalar implementations, we achieve maximum performance with minimal complexity. The hex conversion alone provides enough value to justify the nightly requirement, with additional optimizations providing cumulative benefits that establish checkle as the performance leader in parallel checksumming.
+SIMD optimization is a key differentiator for checkle. By focusing on high-value
+operations and completely replacing scalar implementations, we achieve maximum
+performance with minimal complexity. The hex conversion alone provides enough
+value to justify the nightly requirement, with additional optimizations
+providing cumulative benefits that establish checkle as the performance leader
+in parallel checksumming.

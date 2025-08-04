@@ -108,15 +108,16 @@ get_checkle_hash() {
     
     # Run checkle and capture output
     local output
-    output=$("$CHECKLE_BIN" --algorithm "$algorithm" hash "$file" 2>&1)
+    if ! output=$("$CHECKLE_BIN" --algorithm "$algorithm" hash "$file" 2>&1); then
+        print_error "checkle command failed: $output"
+        return 1
+    fi
     
-    # Check if checksum.txt was created
-    if [[ -f "checksum.txt" ]]; then
-        # Extract hash from checksum.txt
-        hash=$(grep -F "$(basename "$file")" checksum.txt | cut -f1)
-        rm -f checksum.txt  # Clean up
-    else
-        print_error "checkle did not create checksum.txt"
+    # Extract hash from output (first field of the line)
+    hash=$(echo "$output" | awk '{print $1}')
+    
+    if [[ -z "$hash" ]]; then
+        print_error "Failed to extract hash from checkle output"
         return 1
     fi
     
@@ -159,7 +160,7 @@ test_file() {
     # Test MD5
     if standard_md5=$(get_standard_md5 "$file"); then
         if checkle_md5=$(get_checkle_hash "$file" "md5"); then
-            compare_hashes "$file" "MD5" "$standard_md5" "$checkle_md5" "MD5 hash for $basename"
+            compare_hashes "$file" "MD5" "$standard_md5" "$checkle_md5" "MD5 hash for $basename" || true
         else
             print_error "Failed to get checkle MD5 hash for $basename"
             ((TESTS_FAILED++))
@@ -169,7 +170,7 @@ test_file() {
     # Test SHA256
     if standard_sha256=$(get_standard_sha256 "$file"); then
         if checkle_sha256=$(get_checkle_hash "$file" "sha2"); then
-            compare_hashes "$file" "SHA256" "$standard_sha256" "$checkle_sha256" "SHA256 hash for $basename"
+            compare_hashes "$file" "SHA256" "$standard_sha256" "$checkle_sha256" "SHA256 hash for $basename" || true
         else
             print_error "Failed to get checkle SHA256 hash for $basename"
             ((TESTS_FAILED++))
@@ -211,7 +212,10 @@ generate_report() {
         echo "Files tested:"
         for file in "$TEST_DATA_DIR"/*; do
             if [[ -f "$file" ]]; then
-                echo "  - $(basename "$file")"
+                # Only list actual data files, not hash files
+                if [[ ! "$file" =~ \.(md5|sha256)(\.md5)?$ ]]; then
+                    echo "  - $(basename "$file")"
+                fi
             fi
         done
         
@@ -230,6 +234,10 @@ test_batch_verification() {
     
     for file in "$TEST_DATA_DIR"/*; do
         if [[ -f "$file" ]]; then
+            # Skip hash files for batch verification too
+            if [[ "$file" =~ \.(md5|sha256)(\.md5)?$ ]]; then
+                continue
+            fi
             if hash=$(get_standard_md5 "$file"); then
                 echo -e "$hash\t$file" >> "$standard_checksum_file"
             fi
@@ -238,7 +246,7 @@ test_batch_verification() {
     
     # Test checkle's verify-many command
     cd "$PROJECT_ROOT"
-    if "$CHECKLE_BIN" verify-many --checksum-file "$standard_checksum_file" 2>&1; then
+    if "$CHECKLE_BIN" verify-many -c "$standard_checksum_file" 2>&1; then
         print_success "Batch verification: PASSED"
         ((TESTS_PASSED++))
     else
@@ -279,6 +287,10 @@ main() {
     
     for file in "$TEST_DATA_DIR"/*; do
         if [[ -f "$file" ]]; then
+            # Skip hash files themselves - we only want to test the actual data files
+            if [[ "$file" =~ \.(md5|sha256)(\.md5)?$ ]]; then
+                continue
+            fi
             test_file "$file"
         fi
     done

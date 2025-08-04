@@ -15,7 +15,21 @@
           inherit system overlays;
         };
         
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        rustStable = pkgs.rust-bin.stable.latest.default.override {
+          extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
+          targets = [
+            "x86_64-unknown-linux-gnu"
+            "x86_64-unknown-linux-musl"
+            "aarch64-unknown-linux-gnu"
+            "aarch64-unknown-linux-musl"
+            "x86_64-apple-darwin"
+            "aarch64-apple-darwin"
+            "x86_64-pc-windows-msvc"
+            "aarch64-pc-windows-msvc"
+          ];
+        };
+        
+        rustNightly = pkgs.rust-bin.nightly.latest.default.override {
           extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
           targets = [
             "x86_64-unknown-linux-gnu"
@@ -44,7 +58,8 @@
         
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            rustToolchain
+            rustStable
+            rustNightly
             pkg-config
             just
             pre-commit
@@ -77,6 +92,9 @@
             # TOML formatter
             taplo
             
+            # Documentation
+            mdbook
+            
             # For direnv
             direnv
             nix-direnv
@@ -86,6 +104,9 @@
 
           shellHook = ''
             echo "checkle development environment"
+            echo "Rust toolchains available:"
+            echo "  - Stable: rustc (default)"
+            echo "  - Nightly: rustc +nightly"
             echo "Run 'just' to see available commands"
           '';
 

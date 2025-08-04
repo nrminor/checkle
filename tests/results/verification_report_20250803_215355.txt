@@ -1,0 +1,62 @@
+checkle Hash Verification Report
+================================
+
+Date: Sun Aug  3 21:54:05 CDT 2025
+checkle binary: /Users/nickminor/Documents/bioinformatics/checkle/target/release/checkle
+
+Test Summary:
+  Total tests: 93
+  Passed: 93
+  Failed: 0
+
+Result: ALL TESTS PASSED ✓
+
+checkle produces identical hashes to standard utilities.
+
+Files tested:
+  - all_zeros_10kb.bin
+  - all_zeros_10kb.bin.md5
+  - all_zeros_10kb.bin.md5.md5
+  - all_zeros_10kb.bin.sha256
+  - all_zeros_10kb.bin.sha256.md5
+  - binary_1kb.bin
+  - binary_1kb.bin.md5
+  - binary_1kb.bin.md5.md5
+  - binary_1kb.bin.sha256
+  - binary_1kb.bin.sha256.md5
+  - binary_1mb.bin
+  - binary_1mb.bin.md5
+  - binary_1mb.bin.md5.md5
+  - binary_1mb.bin.sha256
+  - binary_1mb.bin.sha256.md5
+  - empty.txt
+  - empty.txt.md5
+  - empty.txt.md5.md5
+  - empty.txt.sha256
+  - empty.txt.sha256.md5
+  - file1.txt
+  - file1.txt.md5
+  - file1.txt.md5.md5
+  - file2.txt
+  - file2.txt.md5
+  - file2.txt.md5.md5
+  - genomics_sample.fasta
+  - genomics_sample.fasta.md5
+  - genomics_sample.fasta.md5.md5
+  - genomics_sample.fasta.sha256
+  - genomics_sample.fasta.sha256.md5
+  - multiline.txt
+  - multiline.txt.md5
+  - multiline.txt.md5.md5
+  - multiline.txt.sha256
+  - multiline.txt.sha256.md5
+  - single_line.txt
+  - single_line.txt.md5
+  - single_line.txt.md5.md5
+  - single_line.txt.sha256
+  - single_line.txt.sha256.md5
+  - special_chars.txt
+  - special_chars.txt.md5
+  - special_chars.txt.md5.md5
+  - special_chars.txt.sha256
+  - special_chars.txt.sha256.md5
