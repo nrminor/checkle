@@ -113,8 +113,8 @@ get_checkle_hash() {
         return 1
     fi
     
-    # Extract hash from output (first field of the line)
-    hash=$(echo "$output" | awk '{print $1}')
+    # Extract hash from output (skip timestamp lines, get the actual hash)
+    hash=$(echo "$output" | grep -v '^\[' | awk 'NF>0 {print $1}' | head -1)
     
     if [[ -z "$hash" ]]; then
         print_error "Failed to extract hash from checkle output"
