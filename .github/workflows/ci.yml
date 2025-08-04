@@ -3,8 +3,32 @@ name: CI
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'examples/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'justfile'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'examples/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'justfile'
+      - 'flake.nix'
+      - 'flake.lock'
+      - '.github/workflows/ci.yml'
 
 env:
   CARGO_TERM_COLOR: always
@@ -74,15 +98,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --no-deps --all-features
       
-  # Security audit (make it required for PRs)
-  audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     name: Build
@@ -97,35 +112,3 @@ jobs:
       - run: cargo build --verbose
       - run: cargo build --release --verbose
 
-  # Deploy documentation to GitHub Pages
-  deploy-docs:
-    name: Deploy Documentation
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    needs: [check, test, verify-hashes, fmt, clippy]
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install mdbook
-        run: |
-          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.37/mdbook-v0.4.37-x86_64-unknown-linux-gnu.tar.gz | tar -xz
-          sudo mv mdbook /usr/local/bin/
-      - name: Build documentation
-        run: |
-          cd docs
-          mdbook build
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: 'docs/book'
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4

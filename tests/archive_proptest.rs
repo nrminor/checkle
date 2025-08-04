@@ -48,7 +48,7 @@ mod proptest_tests {
     #[cfg(feature = "tar")]
     proptest! {
         #[test]
-        #[ignore = "Archive functionality not yet integrated with CLI"]
+        #[ignore = "Archive implementation under investigation..."]
         fn tar_roundtrip_preserves_content(
             files in files_strategy()
         ) {

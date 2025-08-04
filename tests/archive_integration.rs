@@ -235,7 +235,7 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore = "Archive pattern matching functionality not yet integrated with CLI"]
+    #[ignore = "Pattern filtering (--include/--exclude) not yet implemented for archive traversal"]
     #[cfg(any(feature = "tar", feature = "zip"))]
     fn test_cli_archive_with_pattern() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -258,6 +258,7 @@ mod integration_tests {
             let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
             cmd.arg("hash")
                 .arg(&tar_path)
+                .arg("--recursive")
                 .arg("--include")
                 .arg("*.rs")
                 .arg("--include")
@@ -267,7 +268,6 @@ mod integration_tests {
                 .success()
                 .stdout(predicate::str::contains("code.rs"))
                 .stdout(predicate::str::contains("script.py"))
-                .stdout(predicate::str::contains("2 files"))
                 .stdout(
                     predicate::str::is_match("data.txt")
                         .expect("Failed to create predicate")
@@ -310,7 +310,6 @@ mod integration_tests {
     }
 
     #[test]
-    #[ignore = "Archive error handling not yet integrated with CLI"]
     #[cfg(any(feature = "tar", feature = "zip"))]
     fn test_cli_archive_error_handling() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");

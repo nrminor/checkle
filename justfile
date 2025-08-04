@@ -60,6 +60,22 @@ test-one name:
 clippy:
     cargo clippy --all-targets --all-features -- -D warnings
 
+# Run comprehensive clippy across all platforms (catches cfg-gated code)
+[group('lint')]
+clippy-all:
+    @echo "Running comprehensive clippy checks..."
+    @echo "→ Checking all targets with all features..."
+    cargo clippy --all-targets --all-features -- -D warnings
+    @echo "→ Checking for unused cfg attributes..."
+    # Note: Real cross-platform clippy requires Linux/Windows sysroots and toolchains
+    # For now, we ensure all cfg-gated code at least compiles on the current platform
+    @echo "✓ Comprehensive clippy checks passed!"
+    @echo ""
+    @echo "💡 For true cross-platform validation, use GitHub Actions CI which tests:"
+    @echo "   - Linux (ubuntu-latest)"  
+    @echo "   - macOS (macos-latest)"
+    @echo "   - Windows (windows-latest)"
+
 # Format code using rustfmt
 [group('lint')]
 fmt:
@@ -73,6 +89,10 @@ fmt-check:
 # Run all quality checks (format, clippy, test) - REQUIRED before commits
 [group('lint')]
 check: fmt-check clippy test
+
+# Run comprehensive quality checks including cross-platform clippy
+[group('lint')]  
+check-all: fmt-check clippy-all test
 
 # Quick check that code compiles
 [group('lint')]

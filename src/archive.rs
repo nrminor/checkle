@@ -1138,9 +1138,13 @@ mod tar_impl {
         ///
         /// Panics if the path is invalid or entry count exceeds limits.
         pub fn open(path: &Path) -> Result<Self> {
-            // Precondition assertions (Tiger Style: minimum 2 per function)
-            assert!(path.exists(), "TAR archive path must exist");
-            assert!(path.is_file(), "TAR archive path must be a file");
+            // Precondition checks converted to proper error handling
+            if !path.exists() {
+                return Err(CheckleError::InaccessibleFile(path.to_path_buf()));
+            }
+            if !path.is_file() {
+                return Err(CheckleError::InaccessibleFile(path.to_path_buf()));
+            }
 
             let archive = Self {
                 path: path.to_path_buf(),
@@ -1149,12 +1153,17 @@ mod tar_impl {
             // Verify we can open and read the archive
             let entry_count = archive.verify_archive_readable()?;
 
-            // Postcondition assertions (Tiger Style: minimum 2 per function)
-            assert!(archive.path.exists(), "Archive path preserved");
-            assert!(
-                entry_count <= MAX_ARCHIVE_ENTRIES,
-                "Entry count within limits"
-            );
+            // Postcondition checks converted to proper error handling
+            if !archive.path.exists() {
+                return Err(CheckleError::InaccessibleFile(archive.path.clone()));
+            }
+            if entry_count > MAX_ARCHIVE_ENTRIES {
+                return Err(CheckleError::TooManyArchiveEntries {
+                    path: archive.path.clone(),
+                    count: entry_count,
+                    limit: MAX_ARCHIVE_ENTRIES,
+                });
+            }
 
             Ok(archive)
         }
@@ -1175,13 +1184,32 @@ mod tar_impl {
             })?;
 
             let mut archive = TarArchiveInner::new(file);
-            let entry_count = archive
+            let mut entries = archive
                 .entries()
                 .map_err(|e| CheckleError::CorruptedArchive {
                     path: self.path.clone(),
                     details: format!("Failed to read TAR directory: {e}"),
-                })?
-                .count();
+                })?;
+
+            // Try to read first entry to validate TAR format
+            let entry_count = match entries.next() {
+                Some(result) => {
+                    // If first entry fails, the TAR is corrupted
+                    result.map_err(|e| CheckleError::CorruptedArchive {
+                        path: self.path.clone(),
+                        details: format!("Failed to read entry 0: {e}"),
+                    })?;
+                    // Count remaining entries plus the first one
+                    1 + entries.try_fold(0usize, |count, entry| -> Result<usize> {
+                        entry.map_err(|e| CheckleError::CorruptedArchive {
+                            path: self.path.clone(),
+                            details: format!("Failed to read entry {}: {e}", count + 1),
+                        })?;
+                        Ok(count + 1)
+                    })?
+                }
+                None => 0, // Empty archive
+            };
 
             if entry_count > MAX_ARCHIVE_ENTRIES {
                 return Err(CheckleError::TooManyArchiveEntries {
@@ -1660,9 +1688,13 @@ mod zip_impl {
         ///
         /// Panics if the path is invalid or entry count exceeds limits.
         pub fn open(path: &Path) -> Result<Self> {
-            // Precondition assertions (Tiger Style: minimum 2 per function)
-            assert!(path.exists(), "ZIP archive path must exist");
-            assert!(path.is_file(), "ZIP archive path must be a file");
+            // Precondition checks converted to proper error handling
+            if !path.exists() {
+                return Err(CheckleError::InaccessibleFile(path.to_path_buf()));
+            }
+            if !path.is_file() {
+                return Err(CheckleError::InaccessibleFile(path.to_path_buf()));
+            }
 
             let file = File::open(path).map_err(|e| CheckleError::FileOpenError {
                 path: path.to_path_buf(),
@@ -1690,12 +1722,11 @@ mod zip_impl {
                 path: path.to_path_buf(),
             };
 
-            // Postcondition assertions (Tiger Style: minimum 2 per function)
-            assert!(zip_archive.path.exists(), "Archive path preserved");
-            assert!(
-                zip_archive.archive.len() <= MAX_ARCHIVE_ENTRIES,
-                "Entry count within limits"
-            );
+            // Postcondition checks converted to proper error handling
+            if !zip_archive.path.exists() {
+                return Err(CheckleError::InaccessibleFile(zip_archive.path.clone()));
+            }
+            // Entry count was already checked above, no need to check again
 
             Ok(zip_archive)
         }

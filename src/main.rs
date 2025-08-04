@@ -1041,7 +1041,7 @@ mod preflight {
         use std::fs;
 
         for device in ["sda", "nvme0n1", "vda", "xvda"] {
-            let rotational_path = format!("/sys/block/{}/queue/rotational", device);
+            let rotational_path = format!("/sys/block/{device}/queue/rotational");
             if let Ok(content) = fs::read_to_string(&rotational_path) {
                 if content.trim() == "0" {
                     return true;

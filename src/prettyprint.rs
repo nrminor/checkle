@@ -10,10 +10,12 @@ use prettytable::{Attr, Cell, Row, Table, color};
 use std::{
     fs::Metadata,
     io::{self, Write},
-    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use crate::{
     constants::{
@@ -686,11 +688,16 @@ impl FileHashPairWithMetadata {
             "Metadata file size exceeds maximum"
         );
 
-        let mode = metadata.permissions().mode();
-        let result = Some(mode & VALID_PERMISSION_MASK);
+        #[cfg(unix)]
+        let result = {
+            let mode = metadata.permissions().mode();
+            Some(mode & VALID_PERMISSION_MASK)
+        };
+
+        #[cfg(not(unix))]
+        let result = None;
 
         // Tiger Style: Postcondition assertions
-        debug_assert!(result.is_some(), "Permissions extraction must not fail");
         if let Some(perms) = result {
             debug_assert!(
                 perms <= VALID_PERMISSION_MASK,
