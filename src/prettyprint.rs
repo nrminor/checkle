@@ -5,9 +5,11 @@
 //! tables to stderr for improved readability. The implementation supports multiple
 //! data types through a generic trait system while maintaining backward compatibility.
 
+use jiff::Timestamp;
 use prettytable::{Attr, Cell, Row, Table, color};
 use std::{
     fs::Metadata,
+    io::{self, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
@@ -15,11 +17,13 @@ use std::{
 
 use crate::{
     constants::{
-        EXPECTED_PERMISSION_STRING_LENGTH, MAX_FILE_SIZE_PRETTY as MAX_FILE_SIZE,
-        MAX_PAIRS_COUNT_PRETTY as MAX_PAIRS_COUNT, MAX_STRING_LENGTH_PRETTY as MAX_STRING_LENGTH,
-        MAX_TIMESTAMP_PRETTY as MAX_TIMESTAMP, THRESHOLD, UNITS, VALID_PERMISSION_MASK,
+        EXPECTED_PERMISSION_STRING_LENGTH, HASH_TRUNCATE_CHARS, MAX_ERROR_MESSAGE_LENGTH,
+        MAX_FILE_SIZE_PRETTY as MAX_FILE_SIZE, MAX_HASH_DISPLAY_LENGTH,
+        MAX_PAIRS_COUNT_PRETTY as MAX_PAIRS_COUNT, MAX_PATH_DISPLAY_LENGTH,
+        MAX_STRING_LENGTH_PRETTY as MAX_STRING_LENGTH, MAX_TIMESTAMP_PRETTY as MAX_TIMESTAMP,
+        MIN_TRUNCATE_LENGTH, PATH_TRUNCATE_CHARS, THRESHOLD, UNITS, VALID_PERMISSION_MASK,
     },
-    prelude::CheckleError,
+    errors::{CheckleError, EmptyHash, InvalidHashFormat, StderrWriteError},
 };
 
 /// Trait for types that can be displayed as rows in a pretty table.
@@ -137,33 +141,50 @@ impl VerificationResult {
     /// # Returns
     /// A new `VerificationResult` instance.
     ///
+    /// # Errors
+    /// Returns an error if:
+    /// - Either hash is empty
+    /// - Either hash contains non-hexadecimal characters
+    /// - Either hash exceeds maximum allowed length
+    ///
     /// # Panics
-    /// Panics if either hash is empty or contains non-hexadecimal characters.
-    #[must_use]
+    /// Panics if either hash length exceeds the system maximum string length.
     pub fn new(
         file: std::path::PathBuf,
         expected_hash: String,
         actual_hash: String,
         passed: bool,
-    ) -> Self {
-        // Tiger Style: Precondition assertions
-        debug_assert!(!expected_hash.is_empty(), "Expected hash must not be empty");
-        debug_assert!(!actual_hash.is_empty(), "Actual hash must not be empty");
-        debug_assert!(
-            expected_hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Expected hash must contain only hexadecimal characters"
-        );
-        debug_assert!(
-            actual_hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Actual hash must contain only hexadecimal characters"
-        );
-        debug_assert!(
+    ) -> Result<Self, CheckleError> {
+        // Validate expected hash
+        if expected_hash.is_empty() {
+            return Err(EmptyHash);
+        }
+        if !expected_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(InvalidHashFormat {
+                hash: expected_hash,
+            });
+        }
+
+        // Validate actual hash
+        if actual_hash.is_empty() {
+            return Err(EmptyHash);
+        }
+        if !actual_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(InvalidHashFormat { hash: actual_hash });
+        }
+
+        // True invariants that indicate system limits
+        assert!(
             expected_hash.len() <= MAX_STRING_LENGTH,
-            "Expected hash length exceeds maximum allowed"
+            "Expected hash length {} exceeds system maximum {}",
+            expected_hash.len(),
+            MAX_STRING_LENGTH
         );
-        debug_assert!(
+        assert!(
             actual_hash.len() <= MAX_STRING_LENGTH,
-            "Actual hash length exceeds maximum allowed"
+            "Actual hash length {} exceeds system maximum {}",
+            actual_hash.len(),
+            MAX_STRING_LENGTH
         );
 
         let status = if passed {
@@ -172,7 +193,7 @@ impl VerificationResult {
             VerificationStatus::Fail
         };
 
-        Self {
+        Ok(Self {
             file,
             expected_hash,
             actual_hash,
@@ -180,7 +201,7 @@ impl VerificationResult {
             error_message: None,
             file_size: None,
             modified_time: None,
-        }
+        })
     }
 
     /// Creates a new verification result with file metadata.
@@ -194,18 +215,20 @@ impl VerificationResult {
     ///
     /// # Returns
     /// A new `VerificationResult` instance with metadata.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns an error if hash validation fails (see [`new`])
     pub fn new_with_metadata(
         file: std::path::PathBuf,
         expected_hash: String,
         actual_hash: String,
         passed: bool,
         metadata: &std::fs::Metadata,
-    ) -> Self {
-        let mut result = Self::new(file, expected_hash, actual_hash, passed);
+    ) -> Result<Self, CheckleError> {
+        let mut result = Self::new(file, expected_hash, actual_hash, passed)?;
         result.file_size = Some(metadata.len());
         result.modified_time = metadata.modified().ok();
-        result
+        Ok(result)
     }
 
     /// Creates a new verification result for a missing file.
@@ -332,38 +355,20 @@ impl PrettyTableRow for VerificationResult {
     }
 
     fn format_row(&self) -> Vec<String> {
-        // Tiger Style: Precondition assertions
-        debug_assert!(
+        // Precondition: Validate expected hash exists
+        assert!(
             !self.expected_hash.is_empty(),
             "Expected hash must not be empty"
         );
 
         let file_path_display = format_path_display(&self.file);
-
-        // Format status with color-coded symbol and text
-        let status_display = match &self.status {
-            VerificationStatus::Pass => format!("{} PASS", self.status.symbol()),
-            VerificationStatus::Fail => format!("{} FAIL", self.status.symbol()),
-            VerificationStatus::Missing => format!("{} MISS", self.status.symbol()),
-            VerificationStatus::Error(_) => format!("{} ERR", self.status.symbol()),
-        };
-
+        let status_display = self.format_status_display();
         let expected_display = format_hash_display(&self.expected_hash);
-        let actual_display = if self.actual_hash.is_empty() {
-            "-".to_string()
-        } else {
-            format_hash_display(&self.actual_hash)
-        };
-        let error_display = match &self.status {
-            VerificationStatus::Error(msg) => truncate_string(msg, 48),
-            VerificationStatus::Missing => "File not found".to_string(),
-            _ => "-".to_string(),
-        };
-
+        let actual_display = self.format_actual_hash_display();
+        let error_display = self.format_error_display();
         let size_display = self
             .file_size
             .map_or_else(|| "-".to_string(), format_file_size);
-
         let modified_display = self
             .modified_time
             .map_or_else(|| "-".to_string(), format_datetime_from_system_time);
@@ -378,13 +383,13 @@ impl PrettyTableRow for VerificationResult {
             error_display,
         ];
 
-        // Tiger Style: Postcondition assertion
-        debug_assert_eq!(
+        // Postcondition: Validate result structure
+        assert_eq!(
             result.len(),
             7,
             "Verification result must have exactly 7 columns"
         );
-        debug_assert!(
+        assert!(
             result.iter().all(|s| !s.is_empty()),
             "All columns must be non-empty"
         );
@@ -394,6 +399,49 @@ impl PrettyTableRow for VerificationResult {
 
     fn table_title() -> &'static str {
         "Verification Results"
+    }
+}
+
+// Helper methods to keep format_row under 70 lines
+impl VerificationResult {
+    /// Formats the status display with symbol and text
+    fn format_status_display(&self) -> String {
+        match &self.status {
+            VerificationStatus::Pass => {
+                let symbol = self.status.symbol();
+                format!("{symbol} PASS")
+            }
+            VerificationStatus::Fail => {
+                let symbol = self.status.symbol();
+                format!("{symbol} FAIL")
+            }
+            VerificationStatus::Missing => {
+                let symbol = self.status.symbol();
+                format!("{symbol} MISS")
+            }
+            VerificationStatus::Error(_) => {
+                let symbol = self.status.symbol();
+                format!("{symbol} ERR")
+            }
+        }
+    }
+
+    /// Formats the actual hash display
+    fn format_actual_hash_display(&self) -> String {
+        if self.actual_hash.is_empty() {
+            "-".to_string()
+        } else {
+            format_hash_display(&self.actual_hash)
+        }
+    }
+
+    /// Formats the error message display
+    fn format_error_display(&self) -> String {
+        match &self.status {
+            VerificationStatus::Error(msg) => truncate_string(msg, MAX_ERROR_MESSAGE_LENGTH),
+            VerificationStatus::Missing => "File not found".to_string(),
+            _ => "-".to_string(),
+        }
     }
 }
 
@@ -429,29 +477,35 @@ impl FileHashPairWithMetadata {
     /// A new `FileHashPairWithMetadata` instance with extracted metadata.
     ///
     /// # Errors
-    /// Returns an error if the hash is invalid (empty or non-hexadecimal).
+    /// Returns an error if:
+    /// - The hash is empty
+    /// - The hash contains non-hexadecimal characters
+    /// - The hash exceeds maximum allowed length
     ///
     /// # Panics
-    /// Panics if the file doesn't exist or the hash is malformed.
-    #[must_use]
-    pub fn new(file: PathBuf, hash: String, metadata: &Metadata) -> Self {
-        // Tiger Style: Precondition assertions
-        debug_assert!(!hash.is_empty(), "Hash must not be empty");
-        debug_assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash must contain only hexadecimal characters"
-        );
-        debug_assert!(file.exists(), "File must exist: {}", file.display());
-        debug_assert!(
+    /// Panics if the hash length or file size exceeds system maximums.
+    pub fn new(file: PathBuf, hash: String, metadata: &Metadata) -> Result<Self, CheckleError> {
+        // Validate hash
+        if hash.is_empty() {
+            return Err(EmptyHash);
+        }
+        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(InvalidHashFormat { hash });
+        }
+
+        // True invariants for system limits
+        assert!(
             hash.len() <= MAX_STRING_LENGTH,
-            "Hash length exceeds maximum allowed"
+            "Hash length {} exceeds system maximum {}",
+            hash.len(),
+            MAX_STRING_LENGTH
         );
 
-        // Tiger Style: Resource limits validation
+        // Resource limits validation
         let file_size = metadata.len();
-        debug_assert!(
+        assert!(
             file_size <= MAX_FILE_SIZE,
-            "File size {file_size} exceeds maximum allowed {MAX_FILE_SIZE}"
+            "File size {file_size} exceeds system maximum {MAX_FILE_SIZE}"
         );
 
         // Extract components using helper functions to keep this method under 70 lines
@@ -468,14 +522,13 @@ impl FileHashPairWithMetadata {
             permissions,
         };
 
-        // Tiger Style: Postcondition assertions
-        debug_assert!(
+        // Postcondition invariant
+        assert!(
             result.file_size <= MAX_FILE_SIZE,
             "Result file size exceeds maximum"
         );
-        debug_assert!(!result.hash.is_empty(), "Result hash must not be empty");
 
-        result
+        Ok(result)
     }
 
     /// Creates a new enhanced file-hash pair with fallback metadata.
@@ -490,38 +543,41 @@ impl FileHashPairWithMetadata {
     /// # Returns
     /// A new `FileHashPairWithMetadata` instance with minimal metadata.
     ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The hash is empty
+    /// - The hash contains non-hexadecimal characters
+    ///
     /// # Panics
-    /// Panics if the hash is invalid (empty or non-hexadecimal).
-    #[must_use]
-    pub fn new_with_fallback(file: PathBuf, hash: String) -> Self {
-        // Tiger Style: Precondition assertions
-        debug_assert!(!hash.is_empty(), "Hash must not be empty");
-        debug_assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash must contain only hexadecimal characters"
-        );
-        debug_assert!(
+    /// Panics if the hash length exceeds the system maximum.
+    pub fn new_with_fallback(file: PathBuf, hash: String) -> Result<Self, CheckleError> {
+        // Validate hash
+        if hash.is_empty() {
+            return Err(EmptyHash);
+        }
+        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(InvalidHashFormat { hash });
+        }
+
+        // True invariant for system limit
+        assert!(
             hash.len() <= MAX_STRING_LENGTH,
-            "Hash length exceeds maximum allowed"
+            "Hash length {} exceeds system maximum {}",
+            hash.len(),
+            MAX_STRING_LENGTH
         );
 
         // Extract file extension using helper function
         let file_extension = Self::extract_file_extension(&file);
 
-        let result = Self {
+        Ok(Self {
             file,
             hash,
             file_size: 0,
             modified_time: None,
             file_extension,
             permissions: None,
-        };
-
-        // Tiger Style: Postcondition assertions
-        debug_assert!(!result.hash.is_empty(), "Result hash must not be empty");
-        debug_assert!(result.file_size == 0, "Fallback should have zero file size");
-
-        result
+        })
     }
 
     /// Returns a reference to the file path.
@@ -566,21 +622,9 @@ impl FileHashPairWithMetadata {
     /// the basic `FileHashPair` type.
     #[must_use]
     pub fn into_basic_pair(self) -> crate::io::FileHashPair {
-        // Tiger Style: Precondition assertions
-        debug_assert!(
-            !self.hash.is_empty(),
-            "Hash must not be empty before conversion"
-        );
-
-        let result = crate::io::FileHashPair::new(self.file, self.hash);
-
-        // Tiger Style: Postcondition assertion
-        debug_assert!(
-            !result.hash().is_empty(),
-            "Converted hash must not be empty"
-        );
-
-        result
+        // No need for validation - hash was already validated at construction
+        // Use new_unchecked since archive paths don't exist as filesystem files
+        crate::io::FileHashPair::new_unchecked(self.file, self.hash)
     }
 
     // Tiger Style: Helper functions to keep main methods under 70 lines
@@ -671,11 +715,13 @@ impl PrettyTableRow for FileHashPairWithMetadata {
     }
 
     fn format_row(&self) -> Vec<String> {
-        // Tiger Style: Precondition assertions
-        debug_assert!(!self.hash().is_empty(), "Hash must not be empty");
-        debug_assert!(
+        // Precondition: Validate inputs
+        assert!(!self.hash().is_empty(), "Hash must not be empty");
+        assert!(
             self.file_size() <= MAX_FILE_SIZE,
-            "File size exceeds maximum"
+            "File size {} exceeds maximum {}",
+            self.file_size(),
+            MAX_FILE_SIZE
         );
 
         let hash_display = format_hash_display(self.hash());
@@ -700,9 +746,9 @@ impl PrettyTableRow for FileHashPairWithMetadata {
             permissions_display,
         ];
 
-        // Tiger Style: Postcondition assertions
-        debug_assert_eq!(result.len(), 6, "Hash result must have exactly 6 columns");
-        debug_assert!(
+        // Postcondition: Validate result structure
+        assert_eq!(result.len(), 6, "Hash result must have exactly 6 columns");
+        assert!(
             result.iter().all(|s| !s.is_empty()),
             "All columns must be non-empty"
         );
@@ -773,11 +819,14 @@ pub fn format_file_size(size: u64) -> String {
         debug_assert!(adjusted_size > 0.0, "Adjusted size must be positive");
 
         if adjusted_size >= 100.0 {
-            format!("{:.0} {}", adjusted_size, UNITS[unit_index])
+            let unit = UNITS[unit_index];
+            format!("{adjusted_size:.0} {unit}")
         } else if adjusted_size >= 10.0 {
-            format!("{:.1} {}", adjusted_size, UNITS[unit_index])
+            let unit = UNITS[unit_index];
+            format!("{adjusted_size:.1} {unit}")
         } else {
-            format!("{:.2} {}", adjusted_size, UNITS[unit_index])
+            let unit = UNITS[unit_index];
+            format!("{adjusted_size:.2} {unit}")
         }
     };
 
@@ -802,14 +851,14 @@ pub fn format_file_size(size: u64) -> String {
 /// * `timestamp` - Unix timestamp in seconds
 ///
 /// # Returns
-/// A formatted datetime string in ISO 8601 format, or "Unknown" if conversion fails.
+/// A formatted datetime string in "YYYY-MM-DD HH:MM:SS" format, or "Unknown" if conversion fails.
 ///
 /// # Examples
 /// ```rust
 /// use checkle::prettyprint::format_datetime;
 ///
 /// let result = format_datetime(1609459200); // 2021-01-01 00:00:00 UTC
-/// // Result will be a relative time like "X years ago"
+/// // Result will be an absolute timestamp like "2021-01-01 00:00:00"
 /// assert!(!result.is_empty());
 /// ```
 #[must_use]
@@ -820,9 +869,14 @@ pub fn format_datetime(timestamp: u64) -> String {
         "Timestamp {timestamp} exceeds maximum allowed {MAX_TIMESTAMP}"
     );
 
-    let result = match UNIX_EPOCH.checked_add(std::time::Duration::from_secs(timestamp)) {
-        Some(datetime) => format_datetime_from_system_time(datetime),
-        None => "Unknown".to_string(),
+    // Convert Unix timestamp to jiff Timestamp and format
+    #[allow(clippy::cast_possible_wrap)]
+    let result = match Timestamp::from_second(timestamp as i64) {
+        Ok(ts) => {
+            // Format as "YYYY-MM-DD HH:MM:SS" in local time
+            ts.strftime("%Y-%m-%d %H:%M:%S").to_string()
+        }
+        Err(_) => "Unknown".to_string(),
     };
 
     // Tiger Style: Postcondition assertions
@@ -838,62 +892,15 @@ pub fn format_datetime(timestamp: u64) -> String {
 
 /// Tiger Style: Helper function to keep `format_datetime` under 70 lines
 fn format_datetime_from_system_time(datetime: std::time::SystemTime) -> String {
-    // Tiger Style: Precondition assertion
-    debug_assert!(datetime >= UNIX_EPOCH, "DateTime must be after Unix epoch");
-
-    match datetime.elapsed() {
-        Ok(elapsed) => format_relative_time(elapsed),
-        Err(_) => format_future_datetime(datetime),
+    // Convert SystemTime to jiff Timestamp and format as absolute datetime
+    match Timestamp::try_from(datetime) {
+        Ok(ts) => {
+            // Format as "YYYY-MM-DD HH:MM:SS" in local time
+            // Using strftime for consistent formatting
+            ts.strftime("%Y-%m-%d %H:%M:%S").to_string()
+        }
+        Err(_) => "Unknown".to_string(),
     }
-}
-
-/// Formats elapsed time as relative description
-fn format_relative_time(elapsed: std::time::Duration) -> String {
-    let total_secs = elapsed.as_secs();
-    let days = total_secs / 86400;
-
-    // Tiger Style: Range assertions
-    debug_assert!(
-        total_secs < u64::MAX / 86400,
-        "Elapsed seconds would overflow days calculation"
-    );
-
-    let result = if days == 0 {
-        "Today".to_string()
-    } else if days == 1 {
-        "Yesterday".to_string()
-    } else if days < 7 {
-        format!("{days} days ago")
-    } else if days < 30 {
-        format!("{} weeks ago", days / 7)
-    } else if days < 365 {
-        format!("{} months ago", days / 30)
-    } else {
-        format!("{} years ago", days / 365)
-    };
-
-    // Tiger Style: Postcondition assertion
-    debug_assert!(!result.is_empty(), "Relative time result must not be empty");
-
-    result
-}
-
-/// Formats future datetime when timestamp is in the future
-fn format_future_datetime(datetime: std::time::SystemTime) -> String {
-    let formatted = format!("{datetime:?}");
-    let result = formatted
-        .split_whitespace()
-        .next()
-        .unwrap_or("Unknown")
-        .to_string();
-
-    // Tiger Style: Postcondition assertion
-    debug_assert!(
-        !result.is_empty(),
-        "Future datetime result must not be empty"
-    );
-
-    result
 }
 
 /// Formats Unix file permissions as a human-readable string.
@@ -967,12 +974,16 @@ pub fn format_permissions(mode: u32) -> String {
 ///
 /// # Errors
 /// Returns an error if table formatting fails or if writing to stderr fails.
+///
+/// # Panics
+/// Panics if the results count exceeds the maximum allowed.
 pub fn display_verification_table(results: &[VerificationResult]) -> Result<(), CheckleError> {
-    // Tiger Style: Precondition assertions
-    debug_assert!(
+    // Precondition: Check resource limits
+    assert!(
         results.len() <= MAX_PAIRS_COUNT,
-        "Results count {} exceeds maximum allowed {MAX_PAIRS_COUNT}",
-        results.len()
+        "Results count {} exceeds maximum allowed {}",
+        results.len(),
+        MAX_PAIRS_COUNT
     );
 
     if results.is_empty() {
@@ -981,10 +992,10 @@ pub fn display_verification_table(results: &[VerificationResult]) -> Result<(), 
 
     let mut table = create_table_with_generic_headers::<VerificationResult>();
     add_colored_verification_rows(&mut table, results);
-    print_generic_table_to_stderr::<VerificationResult>(&table);
+    print_generic_table_to_stderr::<VerificationResult>(&table)?;
 
-    // Tiger Style: Postcondition assertion
-    debug_assert!(!table.is_empty(), "Table must have at least header row");
+    // Postcondition: Table structure invariant
+    assert!(!table.is_empty(), "Table must have at least header row");
 
     Ok(())
 }
@@ -999,14 +1010,18 @@ pub fn display_verification_table(results: &[VerificationResult]) -> Result<(), 
 ///
 /// # Errors
 /// Returns an error if table formatting fails or if writing to stderr fails.
+///
+/// # Panics
+/// Panics if the results count exceeds the maximum allowed.
 pub fn display_verification_table_with_summary(
     results: &[VerificationResult],
 ) -> Result<(), CheckleError> {
-    // Tiger Style: Precondition assertions
-    debug_assert!(
+    // Precondition: Check resource limits
+    assert!(
         results.len() <= MAX_PAIRS_COUNT,
-        "Results count {} exceeds maximum allowed {MAX_PAIRS_COUNT}",
-        results.len()
+        "Results count {} exceeds maximum allowed {}",
+        results.len(),
+        MAX_PAIRS_COUNT
     );
 
     // Display the main table
@@ -1014,29 +1029,24 @@ pub fn display_verification_table_with_summary(
 
     if !results.is_empty() {
         // Calculate summary statistics
-        let total = results.len();
-        let passed = results
-            .iter()
-            .filter(|r| matches!(r.status, VerificationStatus::Pass))
-            .count();
-        let failed = results
-            .iter()
-            .filter(|r| matches!(r.status, VerificationStatus::Fail))
-            .count();
-        let missing = results
-            .iter()
-            .filter(|r| matches!(r.status, VerificationStatus::Missing))
-            .count();
-        let errors = results
-            .iter()
-            .filter(|r| matches!(r.status, VerificationStatus::Error(_)))
-            .count();
+        let summary = VerificationSummary::from_results(results);
 
         // Print summary to stderr
-        eprintln!(
-            "Summary: {passed}/{total} passed, {failed} failed, {missing} missing, {errors} errors"
-        );
-        eprintln!();
+        let mut stderr = io::stderr();
+        writeln!(
+            stderr,
+            "Summary: {}/{} passed, {} failed, {} missing, {} errors",
+            summary.passed, summary.total, summary.failed, summary.missing, summary.errors
+        )
+        .map_err(|e| StderrWriteError {
+            details: "Failed to write verification summary".to_string(),
+            source: e,
+        })?;
+
+        writeln!(stderr).map_err(|e| StderrWriteError {
+            details: "Failed to write final newline".to_string(),
+            source: e,
+        })?;
     }
 
     Ok(())
@@ -1174,6 +1184,9 @@ fn add_colored_verification_rows(table: &mut Table, results: &[VerificationResul
 /// # Errors
 /// Returns an error if table formatting fails or if writing to stderr fails.
 ///
+/// # Panics
+/// Panics if the items count exceeds the maximum allowed.
+///
 /// # Examples
 /// ```rust
 /// use checkle::prettyprint::{FileHashPairWithMetadata, display_table};
@@ -1183,17 +1196,18 @@ fn add_colored_verification_rows(table: &mut Table, results: &[VerificationResul
 ///     FileHashPairWithMetadata::new_with_fallback(
 ///         PathBuf::from("test.txt"),
 ///         "abcdef1234567890".to_string()
-///     )
+///     ).expect("Should create pair")
 /// ];
 ///
 /// display_table(&pairs).expect("Should display table");
 /// ```
 pub fn display_table<T: PrettyTableRow>(items: &[T]) -> Result<(), CheckleError> {
-    // Tiger Style: Precondition assertions
-    debug_assert!(
+    // Precondition: Check resource limits
+    assert!(
         items.len() <= MAX_PAIRS_COUNT,
-        "Items count {} exceeds maximum allowed {MAX_PAIRS_COUNT}",
-        items.len()
+        "Items count {} exceeds maximum allowed {}",
+        items.len(),
+        MAX_PAIRS_COUNT
     );
 
     if items.is_empty() {
@@ -1202,10 +1216,10 @@ pub fn display_table<T: PrettyTableRow>(items: &[T]) -> Result<(), CheckleError>
 
     let mut table = create_table_with_generic_headers::<T>();
     add_generic_data_rows_to_table(&mut table, items);
-    print_generic_table_to_stderr::<T>(&table);
+    print_generic_table_to_stderr::<T>(&table)?;
 
-    // Tiger Style: Postcondition assertion
-    debug_assert!(!table.is_empty(), "Table must have at least header row");
+    // Postcondition: Table structure invariant
+    assert!(!table.is_empty(), "Table must have at least header row");
 
     Ok(())
 }
@@ -1222,6 +1236,9 @@ pub fn display_table<T: PrettyTableRow>(items: &[T]) -> Result<(), CheckleError>
 /// # Errors
 /// Returns an error if table formatting fails or if writing to stderr fails.
 ///
+/// # Panics
+/// Panics if the pairs count exceeds the maximum allowed.
+///
 /// # Examples
 /// ```rust
 /// use checkle::prettyprint::{FileHashPairWithMetadata, display_pretty_table};
@@ -1231,17 +1248,18 @@ pub fn display_table<T: PrettyTableRow>(items: &[T]) -> Result<(), CheckleError>
 ///     FileHashPairWithMetadata::new_with_fallback(
 ///         PathBuf::from("test.txt"),
 ///         "abcdef1234567890".to_string()
-///     )
+///     ).expect("Should create pair")
 /// ];
 ///
 /// display_pretty_table(&pairs).expect("Should display table");
 /// ```
 pub fn display_pretty_table(pairs: &[FileHashPairWithMetadata]) -> Result<(), CheckleError> {
-    // Tiger Style: Precondition assertions
-    debug_assert!(
+    // Precondition: Check resource limits
+    assert!(
         pairs.len() <= MAX_PAIRS_COUNT,
-        "Pairs count {} exceeds maximum allowed {MAX_PAIRS_COUNT}",
-        pairs.len()
+        "Pairs count {} exceeds maximum allowed {}",
+        pairs.len(),
+        MAX_PAIRS_COUNT
     );
 
     if pairs.is_empty() {
@@ -1250,10 +1268,10 @@ pub fn display_pretty_table(pairs: &[FileHashPairWithMetadata]) -> Result<(), Ch
 
     let mut table = create_table_with_generic_headers::<FileHashPairWithMetadata>();
     add_colored_hash_rows(&mut table, pairs);
-    print_generic_table_to_stderr::<FileHashPairWithMetadata>(&table);
+    print_generic_table_to_stderr::<FileHashPairWithMetadata>(&table)?;
 
-    // Tiger Style: Postcondition assertion
-    debug_assert!(!table.is_empty(), "Table must have at least header row");
+    // Postcondition: Table structure invariant
+    assert!(!table.is_empty(), "Table must have at least header row");
 
     Ok(())
 }
@@ -1313,21 +1331,59 @@ impl VerificationSummary {
     }
 
     /// Displays the summary to stderr.
-    pub fn display(&self) {
-        eprintln!();
-        eprintln!("Verification Summary:");
-        eprintln!("  Total files: {}", self.total);
-        eprintln!("  Passed: {} ✓", self.passed);
+    ///
+    /// # Errors
+    /// Returns an error if writing to stderr fails.
+    pub fn display(&self) -> Result<(), CheckleError> {
+        let mut stderr = io::stderr();
+
+        writeln!(stderr).map_err(|e| StderrWriteError {
+            details: "Failed to write blank line".to_string(),
+            source: e,
+        })?;
+
+        writeln!(stderr, "Verification Summary:").map_err(|e| StderrWriteError {
+            details: "Failed to write summary header".to_string(),
+            source: e,
+        })?;
+
+        writeln!(stderr, "  Total files: {}", self.total).map_err(|e| StderrWriteError {
+            details: "Failed to write total count".to_string(),
+            source: e,
+        })?;
+
+        writeln!(stderr, "  Passed: {} ✓", self.passed).map_err(|e| StderrWriteError {
+            details: "Failed to write passed count".to_string(),
+            source: e,
+        })?;
+
         if self.failed > 0 {
-            eprintln!("  Failed: {} ✗", self.failed);
+            writeln!(stderr, "  Failed: {} ✗", self.failed).map_err(|e| StderrWriteError {
+                details: "Failed to write failed count".to_string(),
+                source: e,
+            })?;
         }
+
         if self.missing > 0 {
-            eprintln!("  Missing: {} ⚠", self.missing);
+            writeln!(stderr, "  Missing: {} ⚠", self.missing).map_err(|e| StderrWriteError {
+                details: "Failed to write missing count".to_string(),
+                source: e,
+            })?;
         }
+
         if self.errors > 0 {
-            eprintln!("  Errors: {} ⚠", self.errors);
+            writeln!(stderr, "  Errors: {} ⚠", self.errors).map_err(|e| StderrWriteError {
+                details: "Failed to write errors count".to_string(),
+                source: e,
+            })?;
         }
-        eprintln!();
+
+        writeln!(stderr).map_err(|e| StderrWriteError {
+            details: "Failed to write final blank line".to_string(),
+            source: e,
+        })?;
+
+        Ok(())
     }
 
     /// Returns true if all verifications were successful.
@@ -1417,30 +1473,28 @@ fn add_generic_data_rows_to_table<T: PrettyTableRow>(table: &mut Table, items: &
 
 /// Truncates a string to the specified length with ellipsis
 fn truncate_string(s: &str, max_len: usize) -> String {
-    // Tiger Style: Precondition assertions
-    debug_assert!(
-        max_len > 3,
-        "Max length must be greater than 3 for ellipsis"
+    // Precondition: Validate truncation parameters
+    assert!(
+        max_len > MIN_TRUNCATE_LENGTH,
+        "Max length {max_len} must be greater than {MIN_TRUNCATE_LENGTH} for ellipsis"
     );
-    debug_assert!(
+    assert!(
         max_len <= MAX_STRING_LENGTH,
-        "Max length exceeds maximum allowed"
+        "Max length {max_len} exceeds maximum allowed {MAX_STRING_LENGTH}"
     );
 
     let result = if s.len() > max_len {
-        format!("{}...", &s[..max_len - 3])
+        format!("{}...", &s[..max_len - MIN_TRUNCATE_LENGTH])
     } else {
         s.to_string()
     };
 
-    // Tiger Style: Postcondition assertion
-    debug_assert!(
-        !result.is_empty() || s.is_empty(),
-        "Result must match input emptiness"
-    );
-    debug_assert!(
+    // Postcondition: Validate result
+    assert!(
         result.len() <= max_len,
-        "Result length must not exceed max length"
+        "Result length {} must not exceed max length {}",
+        result.len(),
+        max_len
     );
 
     result
@@ -1448,51 +1502,72 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 
 /// Formats hash for display with truncation if too long
 fn format_hash_display(hash: &str) -> String {
-    // Tiger Style: Precondition assertions
-    debug_assert!(!hash.is_empty(), "Hash must not be empty");
-    debug_assert!(
+    // Precondition: Input validation
+    assert!(!hash.is_empty(), "Hash must not be empty");
+    assert!(
         hash.len() <= MAX_STRING_LENGTH,
-        "Hash length exceeds maximum"
+        "Hash length {} exceeds maximum {}",
+        hash.len(),
+        MAX_STRING_LENGTH
     );
 
-    let result = if hash.len() > 32 {
-        format!("{}...{}", &hash[..8], &hash[hash.len() - 8..])
+    let result = if hash.len() > MAX_HASH_DISPLAY_LENGTH {
+        format!(
+            "{}...{}",
+            &hash[..HASH_TRUNCATE_CHARS],
+            &hash[hash.len() - HASH_TRUNCATE_CHARS..]
+        )
     } else {
         hash.to_string()
     };
 
-    // Tiger Style: Postcondition assertion
-    debug_assert!(!result.is_empty(), "Hash display result must not be empty");
+    // Postcondition: Validate result
+    assert!(!result.is_empty(), "Hash display result must not be empty");
 
     result
 }
 
 /// Formats file path for display with truncation if too long
 fn format_path_display(path: &Path) -> String {
-    // Tiger Style: Precondition assertion
-    debug_assert!(!path.as_os_str().is_empty(), "Path must not be empty");
+    // Precondition: Input validation
+    assert!(!path.as_os_str().is_empty(), "Path must not be empty");
 
     let path_str = path.to_string_lossy();
-    let result = if path_str.len() > 50 {
-        format!("...{}", &path_str[path_str.len() - 47..])
+    let result = if path_str.len() > MAX_PATH_DISPLAY_LENGTH {
+        format!("...{}", &path_str[path_str.len() - PATH_TRUNCATE_CHARS..])
     } else {
         path_str.to_string()
     };
 
-    // Tiger Style: Postcondition assertion
-    debug_assert!(!result.is_empty(), "Path display result must not be empty");
+    // Postcondition: Validate result
+    assert!(!result.is_empty(), "Path display result must not be empty");
 
     result
 }
 
-/// Tiger Style: Helper function to print generic table to stderr
-fn print_generic_table_to_stderr<T: PrettyTableRow>(table: &Table) {
-    // Tiger Style: Precondition assertion
-    debug_assert!(!table.is_empty(), "Table must not be empty");
+/// Helper function to print generic table to stderr
+fn print_generic_table_to_stderr<T: PrettyTableRow>(table: &Table) -> Result<(), CheckleError> {
+    // Precondition: Validate table structure
+    assert!(!table.is_empty(), "Table must not be empty");
 
-    eprintln!("\n{}:", T::table_title());
-    eprintln!("{table}");
-    eprintln!();
+    let mut stderr = io::stderr();
+
+    writeln!(stderr, "\n{}:", T::table_title()).map_err(|e| StderrWriteError {
+        details: "Failed to write table title".to_string(),
+        source: e,
+    })?;
+
+    writeln!(stderr, "{table}").map_err(|e| StderrWriteError {
+        details: "Failed to write table content".to_string(),
+        source: e,
+    })?;
+
+    writeln!(stderr).map_err(|e| StderrWriteError {
+        details: "Failed to write final newline".to_string(),
+        source: e,
+    })?;
+
+    Ok(())
 }
 
 /// Converts a collection of enhanced pairs to basic `FileHashPair` for compatibility.
@@ -1568,9 +1643,13 @@ mod tests {
     fn test_format_datetime() {
         // Test with known timestamp (2021-01-01 00:00:00 UTC)
         let result = format_datetime(1_609_459_200);
-        // Should contain some meaningful date information
+        // Should contain an absolute datetime in format "YYYY-MM-DD HH:MM:SS"
         assert!(result.len() > 3);
         assert!(!result.contains("Unknown"));
+        // Check that it contains date components
+        assert!(result.contains("2021"));
+        assert!(result.contains(':'));
+        assert!(result.contains('-'));
     }
 
     #[test]
@@ -1583,7 +1662,8 @@ mod tests {
         let hash = "abcdef1234567890".to_string();
 
         let pair =
-            FileHashPairWithMetadata::new(temp_file.path().to_path_buf(), hash.clone(), &metadata);
+            FileHashPairWithMetadata::new(temp_file.path().to_path_buf(), hash.clone(), &metadata)
+                .expect("Should create pair with valid hash");
 
         assert_eq!(pair.hash(), &hash);
         assert_eq!(pair.file(), temp_file.path());
@@ -1593,11 +1673,13 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_file_hash_pair_with_fallback() {
         let path = std::path::PathBuf::from("nonexistent.txt");
         let hash = "abcdef1234567890".to_string();
 
-        let pair = FileHashPairWithMetadata::new_with_fallback(path.clone(), hash.clone());
+        let pair = FileHashPairWithMetadata::new_with_fallback(path.clone(), hash.clone())
+            .expect("Should create fallback pair with valid hash");
 
         assert_eq!(pair.hash(), &hash);
         assert_eq!(pair.file(), path.as_path());
@@ -1617,11 +1699,13 @@ mod tests {
             FileHashPairWithMetadata::new_with_fallback(
                 temp_file1.path().to_path_buf(),
                 "abcdef1234567890".to_string(),
-            ),
+            )
+            .expect("Should create fallback pair 1"),
             FileHashPairWithMetadata::new_with_fallback(
                 temp_file2.path().to_path_buf(),
                 "1234567890abcdef".to_string(),
-            ),
+            )
+            .expect("Should create fallback pair 2"),
         ];
 
         let basic = convert_to_basic_pairs(enhanced);
@@ -1638,17 +1722,22 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_display_pretty_table_with_data() {
-        let pairs = vec![FileHashPairWithMetadata::new_with_fallback(
-            std::path::PathBuf::from("test.txt"),
-            "abcdef1234567890".to_string(),
-        )];
+        let pairs = vec![
+            FileHashPairWithMetadata::new_with_fallback(
+                std::path::PathBuf::from("test.txt"),
+                "abcdef1234567890".to_string(),
+            )
+            .expect("Should create fallback pair"),
+        ];
 
         let result = display_pretty_table(&pairs);
         assert!(result.is_ok());
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_verification_result_creation() {
         let file = std::path::PathBuf::from("test.txt");
         let expected = "abcdef1234567890".to_string();
@@ -1656,7 +1745,8 @@ mod tests {
         let passed = true;
 
         let result =
-            VerificationResult::new(file.clone(), expected.clone(), actual.clone(), passed);
+            VerificationResult::new(file.clone(), expected.clone(), actual.clone(), passed)
+                .expect("Should create verification result with valid hashes");
 
         assert_eq!(result.file(), file.as_path());
         assert_eq!(result.expected_hash(), &expected);
@@ -1665,6 +1755,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_verification_result_failed() {
         let file = std::path::PathBuf::from("test.txt");
         let expected = "abcdef1234567890".to_string();
@@ -1672,7 +1763,8 @@ mod tests {
         let passed = false;
 
         let result =
-            VerificationResult::new(file.clone(), expected.clone(), actual.clone(), passed);
+            VerificationResult::new(file.clone(), expected.clone(), actual.clone(), passed)
+                .expect("Should create verification result with valid hashes");
 
         assert_eq!(result.file(), file.as_path());
         assert_eq!(result.expected_hash(), &expected);
@@ -1681,13 +1773,15 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_verification_result_pretty_table_row() {
         let file = std::path::PathBuf::from("test.txt");
         let expected = "abcdef1234567890".to_string();
         let actual = "abcdef1234567890".to_string();
         let passed = true;
 
-        let result = VerificationResult::new(file, expected, actual, passed);
+        let result = VerificationResult::new(file, expected, actual, passed)
+            .expect("Should create verification result with valid hashes");
 
         let headers = VerificationResult::column_headers();
         assert_eq!(
@@ -1715,13 +1809,15 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_verification_result_failed_formatting() {
         let file = std::path::PathBuf::from("test.txt");
         let expected = "abcdef1234567890".to_string();
         let actual = "1234567890abcdef".to_string();
         let passed = false;
 
-        let result = VerificationResult::new(file, expected, actual, passed);
+        let result = VerificationResult::new(file, expected, actual, passed)
+            .expect("Should create verification result with valid hashes");
         let row = result.format_row();
 
         assert_eq!(row.len(), 7);
@@ -1805,6 +1901,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_verification_summary() {
         use crate::prettyprint::VerificationSummary;
 
@@ -1814,13 +1911,15 @@ mod tests {
                 "abcdef1234567890".to_string(),
                 "abcdef1234567890".to_string(),
                 true,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
             VerificationResult::new(
                 std::path::PathBuf::from("fail1.txt"),
                 "abcdef1234567890".to_string(),
                 "1234567890abcdef".to_string(),
                 false,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
             VerificationResult::new_missing(
                 std::path::PathBuf::from("missing1.txt"),
                 "abcdef1234567890".to_string(),
@@ -1847,13 +1946,15 @@ mod tests {
                 "abcdef1234567890".to_string(),
                 "abcdef1234567890".to_string(),
                 true,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
             VerificationResult::new(
                 std::path::PathBuf::from("pass2.txt"),
                 "1234567890abcdef".to_string(),
                 "1234567890abcdef".to_string(),
                 true,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
         ];
 
         let all_passed_summary = VerificationSummary::from_results(&all_passed_results);
@@ -1861,6 +1962,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_display_verification_table() {
         // Test that display_verification_table properly formats results
         let results = vec![
@@ -1869,13 +1971,15 @@ mod tests {
                 "abcdef1234567890".to_string(),
                 "abcdef1234567890".to_string(),
                 true,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
             VerificationResult::new(
                 std::path::PathBuf::from("fail.txt"),
                 "abcdef1234567890".to_string(),
                 "1234567890abcdef".to_string(),
                 false,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
         ];
 
         // Should not panic and should handle multiple results
@@ -1884,6 +1988,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_display_verification_table_with_summary() {
         // Test that summary correctly counts different statuses
         let results = vec![
@@ -1892,19 +1997,22 @@ mod tests {
                 "abcdef1234567890".to_string(),
                 "abcdef1234567890".to_string(),
                 true,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
             VerificationResult::new(
                 std::path::PathBuf::from("pass2.txt"),
                 "1234567890abcdef".to_string(),
                 "1234567890abcdef".to_string(),
                 true,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
             VerificationResult::new(
                 std::path::PathBuf::from("fail.txt"),
                 "fedcba0987654321".to_string(),
                 "1234567890abcdef".to_string(),
                 false,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
             VerificationResult::new_missing(
                 std::path::PathBuf::from("missing.txt"),
                 "deadbeef12345678".to_string(),
@@ -1939,14 +2047,18 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_colored_verification_rows_status_formatting() {
         // Test that status column gets proper formatting with symbols and text
-        let results = vec![VerificationResult::new(
-            std::path::PathBuf::from("test.txt"),
-            "abcdef1234567890".to_string(),
-            "abcdef1234567890".to_string(),
-            true,
-        )];
+        let results = vec![
+            VerificationResult::new(
+                std::path::PathBuf::from("test.txt"),
+                "abcdef1234567890".to_string(),
+                "abcdef1234567890".to_string(),
+                true,
+            )
+            .expect("Should create verification result with valid hashes"),
+        ];
 
         let mut table = create_table_with_generic_headers::<VerificationResult>();
         add_colored_verification_rows(&mut table, &results);
@@ -1960,11 +2072,13 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_file_hash_pair_pretty_table_row() {
         let pair = FileHashPairWithMetadata::new_with_fallback(
             std::path::PathBuf::from("test.txt"),
             "abcdef1234567890".to_string(),
-        );
+        )
+        .expect("Should create fallback pair with valid hash");
 
         let headers = FileHashPairWithMetadata::column_headers();
         assert_eq!(
@@ -1992,6 +2106,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_generic_display_table() {
         let verifications = vec![
             VerificationResult::new(
@@ -1999,13 +2114,15 @@ mod tests {
                 "abcdef1234567890".to_string(),
                 "abcdef1234567890".to_string(),
                 true,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
             VerificationResult::new(
                 std::path::PathBuf::from("test2.txt"),
                 "1234567890abcdef".to_string(),
                 "fedcba0987654321".to_string(),
                 false,
-            ),
+            )
+            .expect("Should create verification result with valid hashes"),
         ];
 
         let result = display_table(&verifications);

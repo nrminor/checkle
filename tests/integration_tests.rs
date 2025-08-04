@@ -26,7 +26,7 @@ fn test_cli_hash_command_integration() {
         .success()
         .stdout(predicate::str::contains("Hello, integration test!").not()) // Should not contain file content
         .stdout(predicate::function(|output: &str| output.len() > 30)) // Should contain a hash (at least 32 chars for MD5)
-        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").unwrap()); // Should be valid MD5 hash
+        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").expect("Failed to create MD5 regex")); // Should be valid MD5 hash
 }
 
 // Integration Test 2: CLI hash command with SHA256
@@ -44,7 +44,7 @@ fn test_cli_hash_command_sha256_integration() {
         .assert()
         .success()
         .stdout(predicate::function(|output: &str| output.len() > 60)) // Should contain a hash (at least 64 chars for SHA256)
-        .stdout(predicate::str::is_match(r"[a-f0-9]{64}").unwrap()); // Should be valid SHA256 hash
+        .stdout(predicate::str::is_match(r"[a-f0-9]{64}").expect("Failed to create SHA256 regex")); // Should be valid SHA256 hash
 }
 
 // Integration Test 3: CLI verify command with correct hash
@@ -268,7 +268,7 @@ fn test_cli_empty_file_integration() {
         .arg(temp_file.path())
         .assert()
         .success()
-        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").unwrap()); // Should still produce valid MD5 hash
+        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").expect("Failed to create MD5 regex")); // Should still produce valid MD5 hash
 }
 
 // Integration Test 13: CLI large file handling (performance test)
@@ -284,7 +284,7 @@ fn test_cli_large_file_integration() {
         .timeout(std::time::Duration::from_secs(30)) // Should complete within 30 seconds
         .assert()
         .success()
-        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").unwrap());
+        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").expect("Failed to create MD5 regex"));
 }
 
 // Integration Test 14: CLI directory input (now supported)
@@ -337,7 +337,7 @@ fn test_cli_large_file_performance_integration() {
         .timeout(std::time::Duration::from_secs(120)) // Should complete within 2 minutes
         .assert()
         .success()
-        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").unwrap());
+        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").expect("Failed to create MD5 regex"));
 }
 
 // Integration Test 17: CLI error handling with corrupted checksum files
@@ -641,5 +641,5 @@ fn test_cli_graceful_operations_integration() {
         .timeout(std::time::Duration::from_secs(30)) // Reasonable timeout
         .assert()
         .success()
-        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").unwrap());
+        .stdout(predicate::str::is_match(r"[a-f0-9]{32}").expect("Failed to create MD5 regex"));
 }

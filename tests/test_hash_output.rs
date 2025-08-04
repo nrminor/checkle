@@ -14,7 +14,7 @@ fn test_hash_output_to_file() {
     fs::write(&test_file, b"Hello, World!").expect("Failed to write test file");
 
     // Run checkle hash with --hash-output
-    let mut cmd = Command::cargo_bin("checkle").unwrap();
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     cmd.arg("hash")
         .arg(&test_file)
         .arg("--hash-output")
@@ -50,7 +50,7 @@ fn test_hash_output_file_already_exists() {
     fs::write(&output_file, b"existing content").expect("Failed to write existing file");
 
     // Run checkle hash with --hash-output pointing to existing file
-    let mut cmd = Command::cargo_bin("checkle").unwrap();
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     cmd.arg("hash")
         .arg(&test_file)
         .arg("--hash-output")
@@ -81,7 +81,7 @@ fn test_hash_default_behavior_unchanged() {
     std::env::set_current_dir(&temp_dir).expect("Failed to change dir");
 
     // Run checkle hash without --hash-output
-    let mut cmd = Command::cargo_bin("checkle").unwrap();
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     cmd.arg("hash").arg(&test_file);
 
     cmd.assert()

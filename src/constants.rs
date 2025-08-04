@@ -41,6 +41,13 @@ pub(crate) const MAX_CHUNK_COUNT: usize = 1024 * 1024; // 1M chunks max
 /// This is used by both hashing and I/O modules.
 pub const MAX_FILES_IN_BATCH: usize = 10_000;
 
+/// Minimum allowed value for `max_files_batch` CLI argument.
+pub const MIN_FILES_BATCH_LIMIT: usize = 1;
+
+/// Maximum allowed value for `max_files_batch` CLI argument.
+/// This prevents users from setting unreasonable values that could exhaust memory.
+pub const MAX_FILES_BATCH_LIMIT: usize = 1_000_000;
+
 /// Threshold for enabling parallel I/O (1MB).
 /// Files smaller than this use sequential processing.
 pub(crate) const PARALLEL_IO_THRESHOLD: u64 = 1024 * 1024;
@@ -124,6 +131,40 @@ pub(crate) const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
 
 /// Threshold for file size unit conversion.
 pub(crate) const THRESHOLD: f64 = 1024.0;
+
+// ============================================================================
+// Pretty Printing Display Constants
+// ============================================================================
+
+/// Maximum length for hash display before truncation (show first 8 and last 8 chars).
+pub(crate) const MAX_HASH_DISPLAY_LENGTH: usize = 32;
+
+/// Number of characters to show at start and end of truncated hash.
+pub(crate) const HASH_TRUNCATE_CHARS: usize = 8;
+
+/// Maximum path length for display before truncation.
+pub(crate) const MAX_PATH_DISPLAY_LENGTH: usize = 50;
+
+/// Number of characters to show at end of truncated path.
+pub(crate) const PATH_TRUNCATE_CHARS: usize = 47;
+
+/// Maximum error message length in table display.
+pub(crate) const MAX_ERROR_MESSAGE_LENGTH: usize = 48;
+
+/// Minimum length required for string truncation with ellipsis.
+pub(crate) const MIN_TRUNCATE_LENGTH: usize = 3;
+
+// ============================================================================
+// Archive Operation Constants
+// ============================================================================
+
+/// Maximum path length for file paths (4KB).
+/// This includes both regular file paths and paths within archives.
+pub const MAX_PATH_LENGTH: usize = 4096;
+
+/// Maximum depth of nested directories within archives.
+/// This prevents excessive resource usage from deeply nested structures.
+pub const MAX_ARCHIVE_DEPTH: usize = 50;
 
 // ============================================================================
 // Compile-time Assertions
@@ -222,6 +263,28 @@ const _: () = assert!(
 const _: () = assert!(
     MAX_FILES_IN_BATCH >= 100,
     "MAX_FILES_IN_BATCH should handle typical directories"
+);
+
+// Max files batch limit assertions
+const _: () = assert!(
+    MIN_FILES_BATCH_LIMIT > 0,
+    "MIN_FILES_BATCH_LIMIT must be positive"
+);
+const _: () = assert!(
+    MAX_FILES_BATCH_LIMIT >= MIN_FILES_BATCH_LIMIT,
+    "MAX_FILES_BATCH_LIMIT must be >= MIN_FILES_BATCH_LIMIT"
+);
+const _: () = assert!(
+    MAX_FILES_BATCH_LIMIT >= MAX_FILES_IN_BATCH,
+    "MAX_FILES_BATCH_LIMIT must be >= default MAX_FILES_IN_BATCH"
+);
+const _: () = assert!(
+    MAX_FILES_BATCH_LIMIT <= 10_000_000,
+    "MAX_FILES_BATCH_LIMIT should be reasonable (<= 10M files)"
+);
+const _: () = assert!(
+    MIN_FILES_BATCH_LIMIT <= MAX_FILES_IN_BATCH,
+    "MIN_FILES_BATCH_LIMIT must allow default value"
 );
 
 // Buffer pool assertions

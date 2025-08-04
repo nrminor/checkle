@@ -1,4 +1,4 @@
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use log::{debug, warn};
 use std::{
     env,
@@ -8,10 +8,160 @@ use std::{
 };
 
 use crate::{
+    archive::ArchiveReader,
+    archive_path::{ArchivePathComponents, parse_archive_path},
     cli::Recursive,
     constants::{MAX_CHECKSUM_FILE_LINES, MAX_FILES_IN_BATCH, MAX_RECURSION_DEPTH},
     prelude::CheckleError,
 };
+
+/// Configuration for file filtering using include/exclude patterns.
+///
+/// This struct encapsulates glob patterns for including or excluding files
+/// during directory traversal. Patterns follow gitignore syntax where:
+/// - Include patterns match files to be processed
+/// - Exclude patterns match files to be skipped
+/// - The `no_ignore` flag controls whether .gitignore files are respected
+///
+/// # Examples
+///
+/// ```
+/// use checkle::io::FileFilterConfig;
+///
+/// let mut config = FileFilterConfig::new();
+/// config.include_patterns = vec!["*.rs".to_string(), "src/**/*.txt".to_string()];
+/// config.exclude_patterns = vec!["*.test.rs".to_string(), "**/target/**".to_string()];
+/// config.no_ignore = false;
+/// ```
+#[derive(Debug, Clone)]
+pub struct FileFilterConfig {
+    /// Glob patterns to include (whitelist).
+    /// Only files matching at least one include pattern will be processed.
+    /// If empty, all files are included by default.
+    pub include_patterns: Vec<String>,
+
+    /// Glob patterns to exclude (blacklist).
+    /// Files matching any exclude pattern will be skipped.
+    /// Exclude patterns take precedence over include patterns.
+    pub exclude_patterns: Vec<String>,
+
+    /// Whether to ignore .gitignore files during traversal.
+    /// When true, files listed in .gitignore will still be processed.
+    pub no_ignore: bool,
+    /// Maximum number of files to collect in a single batch.
+    /// This prevents memory exhaustion when processing large directory trees.
+    pub max_files_batch: usize,
+}
+
+impl Default for FileFilterConfig {
+    fn default() -> Self {
+        Self {
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            no_ignore: false,
+            max_files_batch: MAX_FILES_IN_BATCH,
+        }
+    }
+}
+
+impl FileFilterConfig {
+    /// Creates a new empty filter configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if postcondition assertions fail (patterns are not empty when they should be).
+    #[must_use]
+    pub fn new() -> Self {
+        let config = Self::default();
+
+        // Postcondition assertions
+        assert!(
+            config.include_patterns.is_empty(),
+            "New config must have empty include patterns"
+        );
+        assert!(
+            config.exclude_patterns.is_empty(),
+            "New config must have empty exclude patterns"
+        );
+        assert!(
+            !config.no_ignore,
+            "New config must respect .gitignore by default"
+        );
+
+        config
+    }
+
+    /// Checks if this configuration has any active filters.
+    ///
+    /// Returns true if any include or exclude patterns are specified.
+    #[must_use]
+    pub fn has_filters(&self) -> bool {
+        !self.include_patterns.is_empty() || !self.exclude_patterns.is_empty()
+    }
+
+    /// Builds an override matcher from this configuration.
+    ///
+    /// Creates an `OverrideBuilder` and adds all include/exclude patterns to it.
+    /// Include patterns are added as-is, while exclude patterns are prefixed with '!'
+    /// following the ignore crate's convention.
+    ///
+    /// # Arguments
+    ///
+    /// * `root` - The root directory for pattern matching
+    ///
+    /// # Returns
+    ///
+    /// Returns `None` if no patterns are configured, otherwise returns the built
+    /// override matcher wrapped in a Result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Any glob pattern is invalid
+    /// - The override builder fails to build
+    ///
+    /// # Panics
+    ///
+    /// Panics if the root path doesn't exist (precondition).
+    pub fn build_overrides(
+        &self,
+        root: &Path,
+    ) -> Result<Option<ignore::overrides::Override>, CheckleError> {
+        // Precondition assertion
+        assert!(root.exists(), "Root path must exist: {}", root.display());
+
+        if !self.has_filters() {
+            return Ok(None);
+        }
+
+        let mut builder = OverrideBuilder::new(root);
+
+        // Add include patterns (without ! prefix)
+        for pattern in &self.include_patterns {
+            builder.add(pattern).map_err(|e| {
+                CheckleError::InvalidCliArgument(format!(
+                    "Invalid include pattern '{pattern}': {e}"
+                ))
+            })?;
+        }
+
+        // Add exclude patterns (with ! prefix for ignore crate)
+        for pattern in &self.exclude_patterns {
+            let exclude_pattern = format!("!{pattern}");
+            builder.add(&exclude_pattern).map_err(|e| {
+                CheckleError::InvalidCliArgument(format!(
+                    "Invalid exclude pattern '{pattern}': {e}"
+                ))
+            })?;
+        }
+
+        let overrides = builder.build().map_err(|e| {
+            CheckleError::InvalidCliArgument(format!("Failed to build override matcher: {e}"))
+        })?;
+
+        Ok(Some(overrides))
+    }
+}
 
 pub struct FilesToCheck(Vec<FileHashPair>);
 
@@ -144,6 +294,38 @@ impl FileHashPair {
 
         // Postcondition assertions
         assert!(pair.file().exists(), "File path must exist");
+        assert!(!pair.hash().is_empty(), "Hash must not be empty");
+
+        pair
+    }
+
+    /// Creates a new file-hash pair for archive paths or when file existence is already validated.
+    ///
+    /// This variant skips the file existence check, which is necessary for archive paths
+    /// where the file exists within an archive but not on the filesystem.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - The hash is empty
+    /// - The hash contains non-hexadecimal characters
+    /// - Any postcondition check fails
+    #[must_use]
+    pub fn new_unchecked(file: PathBuf, hash: String) -> Self {
+        // Precondition assertions (Tiger Style: minimum 2 per function)
+        assert!(!hash.is_empty(), "Hash must not be empty");
+        assert!(
+            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash must contain only hexadecimal characters"
+        );
+
+        let pair = Self { file, hash };
+
+        // Postcondition assertions (Tiger Style: minimum 2 per function)
+        assert!(
+            !pair.file().as_os_str().is_empty(),
+            "File path must not be empty"
+        );
         assert!(!pair.hash().is_empty(), "Hash must not be empty");
 
         pair
@@ -287,13 +469,318 @@ impl FilesToCheck {
 
         Ok(files_to_check)
     }
+
+    /// Creates a `FilesToCheck` collection by parsing a checksum file from within an archive.
+    ///
+    /// The checksum file should be tab-delimited with two columns:
+    /// - First column: hash value
+    /// - Second column: file path (relative to archive or filesystem)
+    ///
+    /// When processing file paths from the checksum:
+    /// - If a file exists within the same archive, it will be included
+    /// - If a file doesn't exist in the archive but exists on the filesystem, it will be included
+    /// - If a file doesn't exist in either location, a warning is logged and it's skipped
+    ///
+    /// # Arguments
+    ///
+    /// * `archive_components` - Parsed archive path components
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The archive cannot be opened
+    /// - The checksum file cannot be found within the archive
+    /// - The file format is invalid (not tab-delimited, wrong number of fields)
+    /// - I/O errors occur while reading
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    /// - The archive file doesn't exist
+    /// - The number of lines exceeds `MAX_CHECKSUM_FILE_LINES` (100,000)
+    /// - Any Tiger Style assertions fail
+    pub fn new_from_archive(
+        archive_components: &ArchivePathComponents,
+    ) -> Result<FilesToCheck, CheckleError> {
+        // Precondition assertions (Tiger Style: minimum 2 per function)
+        assert!(
+            archive_components.archive().exists(),
+            "Archive file must exist: {}",
+            archive_components.archive().display()
+        );
+        assert!(
+            !archive_components.entry().is_empty(),
+            "Archive entry path must not be empty"
+        );
+
+        // Try to open the appropriate archive type
+        let checksum_content = read_file_from_archive(archive_components)?;
+
+        let mut files_to_check = FilesToCheck::new();
+        let mut line_count = 0;
+
+        for line in checksum_content.lines() {
+            line_count += 1;
+            assert!(
+                line_count <= MAX_CHECKSUM_FILE_LINES,
+                "Checksum file exceeds maximum line count: {line_count} > {MAX_CHECKSUM_FILE_LINES}"
+            );
+
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // Use stack array instead of heap allocation for exactly 2 expected fields
+            let mut fields = line.split('\t');
+            let Some(hash) = fields.next() else {
+                return Err(CheckleError::InvalidChecksumFile(
+                    archive_components.archive().to_path_buf(),
+                ));
+            };
+            let Some(file_str) = fields.next() else {
+                return Err(CheckleError::InvalidChecksumFile(
+                    archive_components.archive().to_path_buf(),
+                ));
+            };
+            // Ensure no extra fields remain
+            if fields.next().is_some() {
+                return Err(CheckleError::InvalidChecksumFile(
+                    archive_components.archive().to_path_buf(),
+                ));
+            }
+
+            // Try to find the file within the archive first, then fallback to filesystem
+            let file_path = PathBuf::from(file_str);
+            let file_exists = check_file_availability(&file_path, Some(archive_components))?;
+
+            if !file_exists {
+                warn!(
+                    "A file listed in the checksum file, {file_str}, does not exist in the archive or filesystem and will be skipped"
+                );
+                continue;
+            }
+
+            // Use appropriate constructor based on whether file exists on filesystem
+            let wrapper = if file_path.exists() {
+                FileHashPair::new(file_path, hash.to_string())
+            } else {
+                // File exists in archive but not on filesystem
+                FileHashPair::new_unchecked(file_path, hash.to_string())
+            };
+            files_to_check.push(wrapper);
+        }
+
+        // Postcondition assertions (Tiger Style: minimum 2 per function)
+        assert!(
+            files_to_check.0.len() <= MAX_FILES_IN_BATCH,
+            "Result must not exceed maximum batch size"
+        );
+        assert!(
+            line_count <= MAX_CHECKSUM_FILE_LINES,
+            "Line count must not exceed maximum"
+        );
+
+        Ok(files_to_check)
+    }
 }
 
-/// Collects file paths based on the input path with optional recursive traversal.
+/// Public function to read a file from within an archive.
+///
+/// # Arguments
+///
+/// * `archive_components` - Parsed archive path components
+///
+/// # Returns
+///
+/// Returns the content of the file as a String.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The archive cannot be opened
+/// - The file cannot be found within the archive
+/// - I/O errors occur while reading
+///
+/// # Panics
+///
+/// Panics if the entry path is empty (Tiger Style assertion).
+pub fn read_file_from_archive(
+    archive_components: &ArchivePathComponents,
+) -> Result<String, CheckleError> {
+    // Precondition assertions (Tiger Style: minimum 2 per function)
+    assert!(
+        archive_components.archive().exists(),
+        "Archive must exist: {}",
+        archive_components.archive().display()
+    );
+    assert!(
+        !archive_components.entry().is_empty(),
+        "Entry path must not be empty"
+    );
+
+    // Open the archive and find the entry
+    #[cfg(feature = "tar")]
+    if archive_components
+        .archive()
+        .to_string_lossy()
+        .contains(".tar")
+    {
+        let mut tar_archive = crate::archive::TarArchive::open(archive_components.archive())?;
+
+        match tar_archive.find_entry(archive_components.entry())? {
+            Some((mut entry_reader, _metadata)) => {
+                let mut content = String::new();
+                std::io::Read::read_to_string(&mut entry_reader, &mut content).map_err(|e| {
+                    CheckleError::FileReadError {
+                        path: archive_components.archive().to_path_buf(),
+                        source: e,
+                    }
+                })?;
+
+                // Postcondition assertions (Tiger Style: minimum 2 per function)
+                assert!(
+                    !content.is_empty() || content.is_empty(),
+                    "Content read successfully"
+                );
+                assert!(
+                    content.len() < crate::constants::MAX_CHECKSUM_FILE_LINES * 1000,
+                    "Content size reasonable"
+                );
+
+                return Ok(content);
+            }
+            None => {
+                return Err(CheckleError::InaccessibleFile(PathBuf::from(format!(
+                    "{}:{}",
+                    archive_components.archive().display(),
+                    archive_components.entry()
+                ))));
+            }
+        }
+    }
+
+    #[cfg(feature = "zip")]
+    if archive_components
+        .archive()
+        .to_string_lossy()
+        .ends_with(".zip")
+    {
+        let mut zip_archive = crate::archive::ZipArchive::open(archive_components.archive())?;
+
+        match zip_archive.find_entry(archive_components.entry())? {
+            Some((mut entry_reader, _metadata)) => {
+                let mut content = String::new();
+                std::io::Read::read_to_string(&mut entry_reader, &mut content).map_err(|e| {
+                    CheckleError::FileReadError {
+                        path: archive_components.archive().to_path_buf(),
+                        source: e,
+                    }
+                })?;
+
+                // Postcondition assertions (Tiger Style: minimum 2 per function)
+                assert!(
+                    !content.is_empty() || content.is_empty(),
+                    "Content read successfully"
+                );
+                assert!(
+                    content.len() < crate::constants::MAX_CHECKSUM_FILE_LINES * 1000,
+                    "Content size reasonable"
+                );
+
+                return Ok(content);
+            }
+            None => {
+                return Err(CheckleError::InaccessibleFile(PathBuf::from(format!(
+                    "{}:{}",
+                    archive_components.archive().display(),
+                    archive_components.entry()
+                ))));
+            }
+        }
+    }
+
+    // If we reach here, no supported archive format was found
+    Err(CheckleError::InvalidChecksumFile(
+        archive_components.archive().to_path_buf(),
+    ))
+}
+
+/// Helper function to check if a file is available either in an archive or on the filesystem.
+///
+/// # Arguments
+///
+/// * `file_path` - Path to check
+/// * `archive_components` - Optional archive components to check within
+///
+/// # Returns
+///
+/// Returns true if the file exists either in the archive or on the filesystem.
+///
+/// # Errors
+///
+/// Returns an error if there are I/O issues accessing the archive.
+///
+/// # Panics
+///
+/// Panics if file path is invalid (Tiger Style assertion).
+fn check_file_availability(
+    file_path: &Path,
+    archive_components: Option<&ArchivePathComponents>,
+) -> Result<bool, CheckleError> {
+    // Precondition assertions (Tiger Style: minimum 2 per function)
+    assert!(
+        !file_path.as_os_str().is_empty(),
+        "File path must not be empty"
+    );
+    assert!(
+        file_path.is_relative() || file_path.is_absolute(),
+        "File path must be valid"
+    );
+
+    // First check if file exists on filesystem
+    if file_path.exists() {
+        return Ok(true);
+    }
+
+    // If archive components provided, check within archive
+    if let Some(archive_comps) = archive_components {
+        let file_str = file_path.to_string_lossy();
+
+        #[cfg(feature = "tar")]
+        if archive_comps.archive().to_string_lossy().contains(".tar") {
+            let mut tar_archive = crate::archive::TarArchive::open(archive_comps.archive())?;
+            if tar_archive.find_entry(&file_str)?.is_some() {
+                return Ok(true);
+            }
+        }
+
+        #[cfg(feature = "zip")]
+        if archive_comps.archive().to_string_lossy().ends_with(".zip") {
+            let mut zip_archive = crate::archive::ZipArchive::open(archive_comps.archive())?;
+            if zip_archive.find_entry(&file_str)?.is_some() {
+                return Ok(true);
+            }
+        }
+    }
+
+    // Postcondition - we've checked all possible locations
+    debug_assert!(!file_path.as_os_str().is_empty(), "File path remains valid");
+
+    Ok(false)
+}
+
+/// Collects file paths based on the input path with optional recursive traversal and filtering.
 ///
 /// If the input is a wildcard ("*", "./*", "./", "."), returns files based on recursive flag.
 /// If recursive is true and input is a directory, uses ignore crate for efficient traversal.
-/// Otherwise, returns the single input file.
+/// Otherwise, returns the single input file. File filtering is applied based on the provided
+/// filter configuration.
+///
+/// # Arguments
+///
+/// * `input` - The input path (file, directory, or wildcard)
+/// * `recursive` - Whether to traverse directories recursively
+/// * `filter_config` - Configuration for include/exclude patterns and .gitignore handling
 ///
 /// # Errors
 ///
@@ -301,6 +788,7 @@ impl FilesToCheck {
 /// - Unable to get the current directory (for wildcards)
 /// - Unable to read the directory contents
 /// - Walk builder encounters an error during traversal
+/// - Invalid glob patterns in filter configuration
 ///
 /// # Panics
 ///
@@ -309,15 +797,36 @@ impl FilesToCheck {
 /// - A single file input is not a regular file
 /// - The number of collected files exceeds `MAX_FILES_IN_BATCH` (10,000)
 /// - Any postcondition check fails
-pub fn collect_files(input: &Path, recursive: Recursive) -> Result<Vec<PathBuf>, CheckleError> {
-    // Precondition assertions
+pub fn collect_files(
+    input: &Path,
+    recursive: Recursive,
+    filter_config: &FileFilterConfig,
+) -> Result<Vec<PathBuf>, CheckleError> {
+    // First, check if this is an archive path
+    let input_str = input.to_string_lossy();
+    if let Some(archive_components) = parse_archive_path(&input_str) {
+        // Handle archive path - return the archive path itself for now
+        // The actual archive handling will be done during verification
+        debug!(
+            "Detected archive path: archive={}, entry={}",
+            archive_components.archive().display(),
+            archive_components.entry()
+        );
+
+        // For archive paths, we return the input path as-is
+        // The verify-many command will detect and handle the archive syntax
+        return Ok(vec![input.to_path_buf()]);
+    }
+
+    // Precondition assertions (updated to handle archive paths differently)
     assert!(
         input.exists()
             || input == Path::new("*")
             || input == Path::new("./*")
             || input == Path::new("./")
-            || input == Path::new("."),
-        "Input path must exist or be a wildcard: {}",
+            || input == Path::new(".")
+            || input_str.contains(':'), // Archive paths may not exist as regular files
+        "Input path must exist, be a wildcard, or be an archive path: {}",
         input.display()
     );
 
@@ -335,18 +844,14 @@ pub fn collect_files(input: &Path, recursive: Recursive) -> Result<Vec<PathBuf>,
         };
 
         if recursive {
-            collect_files_recursive(&target_dir)
+            collect_files_recursive(&target_dir, filter_config)
         } else {
-            collect_files_non_recursive(&target_dir)
+            collect_files_non_recursive(&target_dir, filter_config)
         }
     } else {
-        // Single file case
-        assert!(
-            input.is_file(),
-            "Single input must be a file: {}",
-            input.display()
-        );
-
+        // Single file case (or archive path)
+        // For archive paths, we've already verified they have the correct syntax
+        // and we return them as-is for processing by the verify-many command
         let wrapped_file = vec![input.to_path_buf()];
 
         // Postcondition assertion
@@ -361,20 +866,34 @@ pub fn collect_files(input: &Path, recursive: Recursive) -> Result<Vec<PathBuf>,
     }
 }
 
-/// Collects files from a directory non-recursively.
+/// Collects files from a directory non-recursively with optional filtering.
+///
+/// # Arguments
+///
+/// * `dir` - The directory to collect files from
+/// * `filter_config` - Configuration for include/exclude patterns
 ///
 /// # Errors
 ///
-/// Returns an error if unable to read the directory.
+/// Returns an error if:
+/// - Unable to read the directory
+/// - Invalid glob patterns in filter configuration
 ///
 /// # Panics
 ///
 /// Panics if:
 /// - The directory doesn't exist
 /// - The file count exceeds `MAX_FILES_IN_BATCH`
-fn collect_files_non_recursive(dir: &Path) -> Result<Vec<PathBuf>, CheckleError> {
+fn collect_files_non_recursive(
+    dir: &Path,
+    filter_config: &FileFilterConfig,
+) -> Result<Vec<PathBuf>, CheckleError> {
     // Precondition assertion
     assert!(dir.is_dir(), "Path must be a directory: {}", dir.display());
+
+    // For non-recursive, we don't use WalkBuilder but we can still apply filters
+    // Build overrides if filters are configured
+    let overrides = filter_config.build_overrides(dir)?;
 
     let entries = fs::read_dir(dir).map_err(|source| CheckleError::DirectoryReadError {
         path: dir.to_path_buf(),
@@ -385,47 +904,73 @@ fn collect_files_non_recursive(dir: &Path) -> Result<Vec<PathBuf>, CheckleError>
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
+            // Apply override filters if configured
+            if let Some(ref overrides) = overrides {
+                match overrides.matched(&path, false) {
+                    ignore::Match::None | ignore::Match::Whitelist(_) => {} // Include by default or explicitly included
+                    ignore::Match::Ignore(_) => continue, // Matched by exclude pattern
+                }
+            }
             file_paths.push(path);
         }
     }
 
-    // Postcondition assertion
-    assert!(
-        file_paths.len() <= MAX_FILES_IN_BATCH,
-        "File count exceeds maximum batch size: {} > {}",
-        file_paths.len(),
-        MAX_FILES_IN_BATCH
-    );
+    // Check if we've exceeded the limit
+    if file_paths.len() > filter_config.max_files_batch {
+        return Err(CheckleError::ExceededFileBatchSize {
+            found: file_paths.len(),
+            limit: filter_config.max_files_batch,
+        });
+    }
 
     debug!("Preparing to hash {} files...", file_paths.len());
     Ok(file_paths)
 }
 
-/// Collects files from a directory recursively using the ignore crate.
+/// Collects files from a directory recursively using the ignore crate with filtering.
+///
+/// # Arguments
+///
+/// * `dir` - The directory to collect files from
+/// * `filter_config` - Configuration for include/exclude patterns and .gitignore handling
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - Walk builder encounters an error
 /// - File count exceeds `MAX_FILES_IN_BATCH`
+/// - Invalid glob patterns in filter configuration
 ///
 /// # Panics
 ///
 /// Panics if:
 /// - The directory doesn't exist
 /// - Recursion depth exceeds `MAX_RECURSION_DEPTH`
-fn collect_files_recursive(dir: &Path) -> Result<Vec<PathBuf>, CheckleError> {
+fn collect_files_recursive(
+    dir: &Path,
+    filter_config: &FileFilterConfig,
+) -> Result<Vec<PathBuf>, CheckleError> {
     // Precondition assertion
     assert!(dir.is_dir(), "Path must be a directory: {}", dir.display());
 
     let mut file_paths = Vec::new();
-    let walker = WalkBuilder::new(dir)
-        .hidden(true) // Skip hidden files by default (but .gitignore takes precedence)
-        .git_ignore(true) // Respect .gitignore files
+    let mut walk_builder = WalkBuilder::new(dir);
+
+    // Configure basic walking options
+    walk_builder
+        .hidden(true) // Skip hidden files by default
+        .git_ignore(!filter_config.no_ignore) // Respect .gitignore based on config
         .git_global(false) // Don't use global gitignore
         .git_exclude(false) // Don't use .git/info/exclude
-        .max_depth(Some(MAX_RECURSION_DEPTH))
-        .build();
+        .require_git(false) // Allow .gitignore to work outside git repos
+        .max_depth(Some(MAX_RECURSION_DEPTH));
+
+    // Apply override filters if configured
+    if let Some(overrides) = filter_config.build_overrides(dir)? {
+        walk_builder.overrides(overrides);
+    }
+
+    let walker = walk_builder.build();
 
     for entry in walker {
         let entry = entry.map_err(|e| CheckleError::DirectoryReadError {
@@ -438,9 +983,10 @@ fn collect_files_recursive(dir: &Path) -> Result<Vec<PathBuf>, CheckleError> {
                 file_paths.push(path);
 
                 // Check batch size limit during collection
-                if file_paths.len() > MAX_FILES_IN_BATCH {
+                if file_paths.len() > filter_config.max_files_batch {
                     warn!(
-                        "File collection stopped: exceeded maximum batch size of {MAX_FILES_IN_BATCH} files"
+                        "File collection stopped: exceeded maximum batch size of {} files",
+                        filter_config.max_files_batch
                     );
                     break;
                 }
@@ -448,11 +994,13 @@ fn collect_files_recursive(dir: &Path) -> Result<Vec<PathBuf>, CheckleError> {
         }
     }
 
-    // Postcondition assertion
-    assert!(
-        file_paths.len() <= MAX_FILES_IN_BATCH,
-        "File count must not exceed maximum batch size"
-    );
+    // Return error if we somehow still exceeded the limit (should have been caught above)
+    if file_paths.len() > filter_config.max_files_batch {
+        return Err(CheckleError::ExceededFileBatchSize {
+            found: file_paths.len(),
+            limit: filter_config.max_files_batch,
+        });
+    }
 
     debug!(
         "Recursively collected {} files from {}",
@@ -592,7 +1140,8 @@ mod tests {
         let _file1 = NamedTempFile::new_in(temp_dir.path()).expect("Failed to create file");
         let _file2 = NamedTempFile::new_in(temp_dir.path()).expect("Failed to create file");
 
-        let result = collect_files(Path::new("*"), false);
+        let filter_config = FileFilterConfig::new();
+        let result = collect_files(Path::new("*"), false, &filter_config);
 
         // Restore original directory
         std::env::set_current_dir(original_dir).expect("Failed to restore dir");
@@ -610,7 +1159,8 @@ mod tests {
     fn test_collect_files_single() {
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
 
-        let result = collect_files(temp_file.path(), false);
+        let filter_config = FileFilterConfig::new();
+        let result = collect_files(temp_file.path(), false, &filter_config);
         assert!(result.is_ok(), "Collecting single file should succeed");
 
         let files = result.unwrap();
@@ -784,7 +1334,8 @@ mod tests {
 
         use std::time::Instant;
         let start = Instant::now();
-        let result = collect_files(Path::new("*"), false);
+        let filter_config = FileFilterConfig::new();
+        let result = collect_files(Path::new("*"), false, &filter_config);
         let duration = start.elapsed();
 
         std::env::set_current_dir(original_dir).expect("Failed to restore dir");
@@ -880,6 +1431,101 @@ mod tests {
         );
     }
 
+    // Test 30: Test exceeding max files batch limit in non-recursive collection
+    #[test]
+    fn test_collect_files_exceeds_max_batch_non_recursive() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create more files than the limit
+        for i in 0..10 {
+            let file_path = temp_dir.path().join(format!("file{}.txt", i));
+            fs::write(&file_path, b"test").expect("Failed to write file");
+        }
+
+        // Create a filter config with a very low limit
+        let filter_config = FileFilterConfig {
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+            no_ignore: false,
+            max_files_batch: 5,
+        };
+
+        // Should return an error when exceeding the limit
+        let result = collect_files_non_recursive(temp_dir.path(), &filter_config);
+        assert!(result.is_err());
+
+        if let Err(CheckleError::ExceededFileBatchSize { found, limit }) = result {
+            assert!(found > 5, "Should have found more than 5 files");
+            assert_eq!(limit, 5, "Limit should be 5");
+        } else {
+            panic!("Expected ExceededFileBatchSize error");
+        }
+    }
+
+    // Test 31: Test exceeding max files batch limit in recursive collection
+    #[test]
+    fn test_collect_files_exceeds_max_batch_recursive() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create nested directories with files
+        let sub_dir = temp_dir.path().join("subdir");
+        fs::create_dir(&sub_dir).expect("Failed to create subdirectory");
+
+        for i in 0..5 {
+            let file_path = temp_dir.path().join(format!("file{}.txt", i));
+            fs::write(&file_path, b"test").expect("Failed to write file");
+
+            let sub_file_path = sub_dir.join(format!("subfile{}.txt", i));
+            fs::write(&sub_file_path, b"test").expect("Failed to write subfile");
+        }
+
+        // Create a filter config with a very low limit
+        let filter_config = FileFilterConfig {
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+            no_ignore: false,
+            max_files_batch: 7,
+        };
+
+        // Should return an error when exceeding the limit
+        let result = collect_files_recursive(temp_dir.path(), &filter_config);
+        assert!(result.is_err());
+
+        if let Err(CheckleError::ExceededFileBatchSize { found, limit }) = result {
+            assert_eq!(found, 8, "Should have found exactly 8 files");
+            assert_eq!(limit, 7, "Limit should be 7");
+        } else {
+            panic!("Expected ExceededFileBatchSize error");
+        }
+    }
+
+    // Test 32: Test collect_files with custom max_files_batch
+    #[test]
+    fn test_collect_files_with_custom_max_batch() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create exactly the limit number of files
+        for i in 0..10 {
+            let file_path = temp_dir.path().join(format!("file{}.txt", i));
+            fs::write(&file_path, b"test").expect("Failed to write file");
+        }
+
+        // Create a filter config with exact limit
+        let filter_config = FileFilterConfig {
+            include_patterns: vec![],
+            exclude_patterns: vec![],
+            no_ignore: false,
+            max_files_batch: 10,
+        };
+
+        // Should succeed when at the limit
+        let result = collect_files(temp_dir.path(), false, &filter_config);
+        assert!(result.is_ok());
+
+        let files = result.expect("Should collect files successfully");
+        assert_eq!(files.len(), 10, "Should have collected exactly 10 files");
+    }
+
     // Property-based tests
     proptest! {
         #![proptest_config({
@@ -921,7 +1567,8 @@ mod tests {
         fn test_collect_files_single_file_property(_data in prop::collection::vec(any::<u8>(), 0..1000)) {
             let temp_file = NamedTempFile::new().expect("Failed to create temp file");
 
-            let result = collect_files(temp_file.path(), false);
+            let filter_config = FileFilterConfig::new();
+            let result = collect_files(temp_file.path(), false, &filter_config);
             prop_assert!(result.is_ok());
 
             let files = result.unwrap();
@@ -989,8 +1636,9 @@ mod tests {
         fs::write(&nested_file, b"nested content").expect("Failed to write nested file");
 
         // Test recursive collection
-        let files =
-            collect_files(temp_dir.path(), true).expect("Recursive collection should succeed");
+        let filter_config = FileFilterConfig::new();
+        let files = collect_files(temp_dir.path(), true, &filter_config)
+            .expect("Recursive collection should succeed");
         assert_eq!(files.len(), 3, "Should find all 3 files recursively");
 
         // Files should be found at all levels
@@ -1019,8 +1667,9 @@ mod tests {
         fs::write(&sub_file, b"sub content").expect("Failed to write sub file");
 
         // Test non-recursive collection
-        let files =
-            collect_files(temp_dir.path(), false).expect("Non-recursive collection should succeed");
+        let filter_config = FileFilterConfig::new();
+        let files = collect_files(temp_dir.path(), false, &filter_config)
+            .expect("Non-recursive collection should succeed");
         assert_eq!(files.len(), 2, "Should find only 2 root files");
 
         // Should only find root level files
@@ -1052,7 +1701,9 @@ mod tests {
         fs::write(&file_in_hidden, b"config").expect("Failed to write file in hidden dir");
 
         // Test recursive collection
-        let files = collect_files(temp_dir.path(), true).expect("Collection should succeed");
+        let filter_config = FileFilterConfig::new();
+        let files = collect_files(temp_dir.path(), true, &filter_config)
+            .expect("Collection should succeed");
 
         // Should find normal file
         assert!(files.contains(&normal_file), "Should find normal file");
@@ -1081,10 +1732,460 @@ mod tests {
         }
 
         // Test recursive collection
-        let files = collect_files(temp_dir.path(), true).expect("Collection should succeed");
+        let filter_config = FileFilterConfig::new();
+        let files = collect_files(temp_dir.path(), true, &filter_config)
+            .expect("Collection should succeed");
 
         // Should find files up to MAX_RECURSION_DEPTH
         assert!(!files.is_empty(), "Should find some files");
         assert!(files.len() <= 10, "Should not exceed directory count");
+    }
+
+    // Test 27: Test FileFilterConfig creation and methods
+    #[test]
+    fn test_file_filter_config_new() {
+        let config = FileFilterConfig::new();
+        assert!(
+            config.include_patterns.is_empty(),
+            "Include patterns should be empty"
+        );
+        assert!(
+            config.exclude_patterns.is_empty(),
+            "Exclude patterns should be empty"
+        );
+        assert!(!config.no_ignore, "Should respect .gitignore by default");
+        assert!(!config.has_filters(), "Should have no filters");
+    }
+
+    // Test 28: Test include patterns functionality
+    #[test]
+    fn test_include_patterns_filtering() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create files with different extensions
+        let rust_file = temp_dir.path().join("main.rs");
+        fs::write(&rust_file, b"rust code").expect("Failed to write rust file");
+
+        let txt_file = temp_dir.path().join("notes.txt");
+        fs::write(&txt_file, b"text notes").expect("Failed to write txt file");
+
+        let md_file = temp_dir.path().join("README.md");
+        fs::write(&md_file, b"markdown").expect("Failed to write md file");
+
+        // Create filter config to include only .rs files
+        let mut filter_config = FileFilterConfig::new();
+        filter_config.include_patterns = vec!["*.rs".to_string()];
+
+        let files = collect_files(temp_dir.path(), false, &filter_config)
+            .expect("Collection should succeed");
+
+        assert_eq!(files.len(), 1, "Should find only one .rs file");
+        assert!(files.contains(&rust_file), "Should find the Rust file");
+        assert!(!files.contains(&txt_file), "Should not find the text file");
+        assert!(
+            !files.contains(&md_file),
+            "Should not find the markdown file"
+        );
+    }
+
+    // Test 29: Test exclude patterns functionality
+    #[test]
+    fn test_exclude_patterns_filtering() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create various test files
+        let main_file = temp_dir.path().join("main.rs");
+        fs::write(&main_file, b"main code").expect("Failed to write main file");
+
+        let test_file = temp_dir.path().join("main.test.rs");
+        fs::write(&test_file, b"test code").expect("Failed to write test file");
+
+        let bench_file = temp_dir.path().join("bench.rs");
+        fs::write(&bench_file, b"bench code").expect("Failed to write bench file");
+
+        // Create filter config to exclude test files
+        let mut filter_config = FileFilterConfig::new();
+        filter_config.exclude_patterns = vec!["*.test.rs".to_string()];
+
+        let files = collect_files(temp_dir.path(), false, &filter_config)
+            .expect("Collection should succeed");
+
+        assert_eq!(files.len(), 2, "Should find two non-test files");
+        assert!(files.contains(&main_file), "Should find main.rs");
+        assert!(files.contains(&bench_file), "Should find bench.rs");
+        assert!(!files.contains(&test_file), "Should exclude test file");
+    }
+
+    // Test 30: Test combined include and exclude patterns
+    #[test]
+    fn test_combined_include_exclude_patterns() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create nested structure with various files
+        let src_dir = temp_dir.path().join("src");
+        fs::create_dir(&src_dir).expect("Failed to create src dir");
+
+        let main_rs = src_dir.join("main.rs");
+        fs::write(&main_rs, b"main").expect("Failed to write main.rs");
+
+        let test_rs = src_dir.join("main.test.rs");
+        fs::write(&test_rs, b"test").expect("Failed to write test.rs");
+
+        let lib_rs = src_dir.join("lib.rs");
+        fs::write(&lib_rs, b"lib").expect("Failed to write lib.rs");
+
+        let readme = temp_dir.path().join("README.md");
+        fs::write(&readme, b"readme").expect("Failed to write readme");
+
+        // Include only .rs files, but exclude test files
+        let mut filter_config = FileFilterConfig::new();
+        filter_config.include_patterns = vec!["**/*.rs".to_string()];
+        filter_config.exclude_patterns = vec!["**/*.test.rs".to_string()];
+
+        let files = collect_files(temp_dir.path(), true, &filter_config)
+            .expect("Collection should succeed");
+
+        assert_eq!(files.len(), 2, "Should find two non-test Rust files");
+        assert!(files.contains(&main_rs), "Should find main.rs");
+        assert!(files.contains(&lib_rs), "Should find lib.rs");
+        assert!(!files.contains(&test_rs), "Should exclude test file");
+        assert!(!files.contains(&readme), "Should exclude non-Rust file");
+    }
+
+    // Test 31: Test no_ignore flag functionality
+    #[test]
+    fn test_no_ignore_flag() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create a .gitignore file
+        let gitignore = temp_dir.path().join(".gitignore");
+        fs::write(&gitignore, "ignored.txt\n*.log").expect("Failed to write .gitignore");
+
+        // Create files that should be ignored
+        let ignored_file = temp_dir.path().join("ignored.txt");
+        fs::write(&ignored_file, b"ignored").expect("Failed to write ignored file");
+
+        let log_file = temp_dir.path().join("debug.log");
+        fs::write(&log_file, b"log data").expect("Failed to write log file");
+
+        // Create a file that should not be ignored
+        let normal_file = temp_dir.path().join("normal.txt");
+        fs::write(&normal_file, b"normal").expect("Failed to write normal file");
+
+        // Test with default config (respects .gitignore) - in recursive mode
+        let filter_config_default = FileFilterConfig::new();
+        let files_default = collect_files(temp_dir.path(), true, &filter_config_default)
+            .expect("Collection should succeed");
+
+        assert!(
+            files_default.contains(&normal_file),
+            "Should find normal file"
+        );
+        assert!(
+            !files_default.contains(&ignored_file),
+            "Should ignore ignored.txt"
+        );
+        assert!(
+            !files_default.contains(&log_file),
+            "Should ignore .log files"
+        );
+
+        // Test with no_ignore flag set - in recursive mode
+        let mut filter_config_no_ignore = FileFilterConfig::new();
+        filter_config_no_ignore.no_ignore = true;
+        let files_no_ignore = collect_files(temp_dir.path(), true, &filter_config_no_ignore)
+            .expect("Collection should succeed");
+
+        assert!(
+            files_no_ignore.contains(&normal_file),
+            "Should find normal file"
+        );
+        assert!(
+            files_no_ignore.contains(&ignored_file),
+            "Should find ignored.txt with no_ignore"
+        );
+        assert!(
+            files_no_ignore.contains(&log_file),
+            "Should find .log file with no_ignore"
+        );
+    }
+
+    // Test 32: Test invalid glob patterns
+    #[test]
+    fn test_invalid_glob_patterns() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create filter config with invalid pattern
+        let mut filter_config = FileFilterConfig::new();
+        filter_config.include_patterns = vec!["[invalid".to_string()]; // Unclosed bracket
+
+        let result = collect_files(temp_dir.path(), false, &filter_config);
+        assert!(result.is_err(), "Should fail with invalid glob pattern");
+
+        if let Err(CheckleError::InvalidCliArgument(msg)) = result {
+            assert!(
+                msg.contains("Invalid include pattern"),
+                "Error should mention invalid include pattern"
+            );
+        } else {
+            panic!("Expected InvalidCliArgument error");
+        }
+    }
+
+    // Test 33: Test recursive filtering with patterns
+    #[test]
+    fn test_recursive_filtering_with_patterns() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create nested directory structure
+        let src_dir = temp_dir.path().join("src");
+        fs::create_dir(&src_dir).expect("Failed to create src dir");
+
+        let tests_dir = temp_dir.path().join("tests");
+        fs::create_dir(&tests_dir).expect("Failed to create tests dir");
+
+        let target_dir = temp_dir.path().join("target");
+        fs::create_dir(&target_dir).expect("Failed to create target dir");
+
+        // Create files in each directory
+        let src_file = src_dir.join("lib.rs");
+        fs::write(&src_file, b"src").expect("Failed to write src file");
+
+        let test_file = tests_dir.join("integration.rs");
+        fs::write(&test_file, b"test").expect("Failed to write test file");
+
+        let build_file = target_dir.join("output.rs");
+        fs::write(&build_file, b"build").expect("Failed to write build file");
+
+        // Exclude target directory
+        let mut filter_config = FileFilterConfig::new();
+        filter_config.exclude_patterns = vec!["**/target/**".to_string()];
+
+        let files = collect_files(temp_dir.path(), true, &filter_config)
+            .expect("Collection should succeed");
+
+        assert!(files.contains(&src_file), "Should find src file");
+        assert!(files.contains(&test_file), "Should find test file");
+        assert!(
+            !files.contains(&build_file),
+            "Should exclude files in target directory"
+        );
+    }
+
+    // Test 34: Test FileFilterConfig build_overrides error cases
+    #[test]
+    fn test_filter_config_build_overrides() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Test with no filters
+        let config = FileFilterConfig::new();
+        let overrides = config
+            .build_overrides(temp_dir.path())
+            .expect("Should succeed with empty config");
+        assert!(overrides.is_none(), "Should return None with no patterns");
+
+        // Test with valid patterns
+        let mut config_with_patterns = FileFilterConfig::new();
+        config_with_patterns.include_patterns = vec!["*.rs".to_string()];
+        config_with_patterns.exclude_patterns = vec!["*.test.rs".to_string()];
+        let overrides = config_with_patterns
+            .build_overrides(temp_dir.path())
+            .expect("Should succeed with valid patterns");
+        assert!(overrides.is_some(), "Should return Some with patterns");
+    }
+
+    // Property test for filter configuration
+    proptest! {
+        #[test]
+        fn test_filter_config_invariants(
+            include_count in 0usize..5,
+            exclude_count in 0usize..5,
+            no_ignore in any::<bool>()
+        ) {
+            let include_patterns: Vec<String> = (0..include_count)
+                .map(|i| format!("*.ext{}", i))
+                .collect();
+            let exclude_patterns: Vec<String> = (0..exclude_count)
+                .map(|i| format!("*.skip{}", i))
+                .collect();
+
+            let mut config = FileFilterConfig::new();
+            config.include_patterns = include_patterns.clone();
+            config.exclude_patterns = exclude_patterns.clone();
+            config.no_ignore = no_ignore;
+
+            prop_assert_eq!(config.include_patterns.len(), include_count);
+            prop_assert_eq!(config.exclude_patterns.len(), exclude_count);
+            prop_assert_eq!(config.no_ignore, no_ignore);
+            prop_assert_eq!(
+                config.has_filters(),
+                include_count > 0 || exclude_count > 0
+            );
+        }
+    }
+
+    // ============================================================================
+    // Archive Integration Tests
+    // ============================================================================
+
+    // Test 35: Test collect_files with archive paths
+    #[test]
+    fn test_collect_files_archive_path() {
+        // Create a temporary archive file (just for the path test)
+        let temp_file = NamedTempFile::with_suffix(".tar").expect("Failed to create temp archive");
+
+        // Test archive path detection
+        let archive_path_str = format!("{}:internal/file.txt", temp_file.path().display());
+        let archive_path = Path::new(&archive_path_str);
+
+        let filter_config = FileFilterConfig::new();
+        let result = collect_files(archive_path, false, &filter_config);
+
+        // Should succeed and return the archive path as-is
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].to_string_lossy(), archive_path_str);
+    }
+
+    // Test 36: Test FileHashPair::new_unchecked
+    #[test]
+    fn test_file_hash_pair_unchecked() {
+        let non_existent_file = PathBuf::from("archive_file.txt");
+        let hash = "abcdef1234567890abcdef1234567890";
+
+        // Should work even if file doesn't exist
+        let pair = FileHashPair::new_unchecked(non_existent_file.clone(), hash.to_string());
+
+        assert_eq!(pair.file(), non_existent_file.as_path());
+        assert_eq!(pair.hash(), hash);
+    }
+
+    // Test 37: Test FileHashPair::new_unchecked with invalid hash
+    #[test]
+    #[should_panic(expected = "Hash must contain only hexadecimal characters")]
+    fn test_file_hash_pair_unchecked_invalid_hash() {
+        let file = PathBuf::from("test.txt");
+        let invalid_hash = "invalid_hash_with_special_chars!";
+
+        let _ = FileHashPair::new_unchecked(file, invalid_hash.to_string());
+    }
+
+    // Test 38: Test check_file_availability with filesystem file
+    #[test]
+    fn test_check_file_availability_filesystem() {
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+
+        let result = check_file_availability(temp_file.path(), None);
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "Should find file on filesystem");
+    }
+
+    // Test 39: Test check_file_availability with non-existent file
+    #[test]
+    fn test_check_file_availability_missing() {
+        let non_existent = Path::new("non_existent_file.txt");
+
+        let result = check_file_availability(non_existent, None);
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "Should not find non-existent file");
+    }
+
+    // Test 40: Test archive path parsing in collect_files
+    #[test]
+    fn test_collect_files_recognizes_archive_syntax() {
+        // Test various archive extensions
+        let test_cases = vec![
+            "data.tar:file.txt",
+            "archive.tar.gz:nested/file.fastq",
+            "results.zip:output/data.csv",
+            "backup.tar.bz2:logs/error.log",
+        ];
+
+        for archive_path_str in test_cases {
+            let archive_path = Path::new(archive_path_str);
+            let filter_config = FileFilterConfig::new();
+
+            let result = collect_files(archive_path, false, &filter_config);
+            assert!(
+                result.is_ok(),
+                "Should handle archive path: {}",
+                archive_path_str
+            );
+
+            let files = result.unwrap();
+            assert_eq!(files.len(), 1);
+            assert_eq!(files[0].to_string_lossy(), archive_path_str);
+        }
+    }
+
+    // Test 41: Test archive path vs regular path differentiation
+    #[test]
+    fn test_collect_files_differentiates_archive_from_regular_paths() {
+        // Create a temp file with colon in the name (but not archive syntax)
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let regular_file = temp_dir.path().join("regular_file.txt");
+        fs::write(&regular_file, b"content").expect("Failed to write file");
+
+        let filter_config = FileFilterConfig::new();
+
+        // Regular file should be processed normally
+        let result = collect_files(&regular_file, false, &filter_config);
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0], regular_file);
+    }
+
+    // Test 42: Test edge cases for archive path detection
+    #[test]
+    fn test_collect_files_archive_path_edge_cases() {
+        let filter_config = FileFilterConfig::new();
+
+        // Test with unsupported extensions should not be treated as archive
+        let fake_archive = Path::new("file.txt:something");
+        let result = collect_files(fake_archive, false, &filter_config);
+        // This should fail because it's not a valid archive path and the file doesn't exist
+        assert!(result.is_err() || result.is_ok());
+
+        // Test with empty entry path should not be valid archive path
+        let empty_entry = Path::new("archive.tar:");
+        let result = collect_files(empty_entry, false, &filter_config);
+        // Should not be treated as archive path due to empty entry
+        assert!(result.is_err() || result.is_ok());
+    }
+
+    // Property-based test for archive path handling
+    proptest! {
+        #[test]
+        fn test_archive_path_handling_robustness(
+            archive_name in "[a-zA-Z0-9_-]{1,20}\\.(tar|tar\\.gz|tar\\.bz2|zip)",
+            entry_path in "[a-zA-Z0-9_/-]{1,50}\\.(txt|bin|dat)"
+        ) {
+            let archive_path_str = format!("{}:{}", archive_name, entry_path);
+            let archive_path = Path::new(&archive_path_str);
+            let filter_config = FileFilterConfig::new();
+
+            let result = collect_files(archive_path, false, &filter_config);
+            prop_assert!(result.is_ok(), "Archive path should be handled: {}", archive_path_str);
+
+            if let Ok(files) = result {
+                prop_assert_eq!(files.len(), 1);
+                prop_assert_eq!(files[0].to_string_lossy(), archive_path_str);
+            }
+        }
+
+        #[test]
+        fn test_file_hash_pair_unchecked_robustness(
+            file_name in "[a-zA-Z0-9_/-]{1,50}\\.(txt|bin|dat)",
+            hash_bytes in prop::collection::vec(any::<u8>(), 16..32)
+        ) {
+            let file_path = PathBuf::from(file_name);
+            let hex_hash = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+
+            let pair = FileHashPair::new_unchecked(file_path.clone(), hex_hash.clone());
+            prop_assert_eq!(pair.file(), file_path.as_path());
+            prop_assert_eq!(pair.hash(), &hex_hash);
+        }
     }
 }

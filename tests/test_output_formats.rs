@@ -229,6 +229,7 @@ mod output_format_tests {
             pretty: _,
             per_file: _,
             no_progress: _,
+            ..
         }) = cli.command
         {
             assert_eq!(input_file.to_string_lossy(), "test.txt");

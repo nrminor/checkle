@@ -1,3 +1,5 @@
+#![allow(clippy::print_stderr, clippy::print_stdout)]
+
 use checkle::hashing::Hasher;
 use std::fs;
 use tempfile::NamedTempFile;

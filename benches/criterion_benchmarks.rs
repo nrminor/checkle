@@ -164,7 +164,8 @@ fn benchmark_file_collection(c: &mut Criterion) {
                     },
                     |(temp_dir, original_dir)| {
                         std::env::set_current_dir(temp_dir.path()).expect("Failed to change dir");
-                        let result = collect_files(&PathBuf::from("*"), false);
+                        let filter_config = checkle::io::FileFilterConfig::new();
+                        let result = collect_files(&PathBuf::from("*"), false, &filter_config);
                         std::env::set_current_dir(original_dir).expect("Failed to restore dir");
                         black_box(result.expect("File collection should succeed"))
                     },

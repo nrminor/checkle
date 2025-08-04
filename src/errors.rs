@@ -124,6 +124,122 @@ pub enum CheckleError {
     #[error("Invalid numeric value '{value}': {reason}")]
     InvalidNumericValue { value: String, reason: String },
 
+    // ============================================================================
+    // Archive-Related Errors
+    // ============================================================================
+    #[error(
+        "Unsupported archive format: {0}\n\nSupported formats:\n- TAR archives (.tar, .tar.gz, .tar.bz2, .tar.xz)\n- ZIP archives (.zip)\n\nPlease ensure your file has the correct extension and format."
+    )]
+    UnsupportedArchiveFormat(PathBuf),
+
+    #[error(
+        "File '{file}' not found in archive '{archive}'\n\nUse 'checkle hash-archive {archive} --list' to see available files."
+    )]
+    FileNotFoundInArchive { archive: PathBuf, file: String },
+
+    #[error(
+        "Archive '{path}' appears to be corrupted: {details}\n\nPossible causes:\n1. Incomplete download or transfer\n2. Archive created with incompatible settings\n3. File system corruption\n\nTry re-downloading or recreating the archive."
+    )]
+    CorruptedArchive { path: PathBuf, details: String },
+
+    #[error(
+        "Archive '{path}' is {size} bytes, exceeding the limit of {limit} bytes\n\nThis archive is too large to process safely. Consider:\n1. Splitting the archive into smaller parts\n2. Processing files separately outside the archive"
+    )]
+    ArchiveTooLarge {
+        path: PathBuf,
+        size: u64,
+        limit: u64,
+    },
+
+    #[error(
+        "Archive '{path}' contains {count} entries, exceeding the limit of {limit}\n\nThis limit exists to prevent memory exhaustion. Consider:\n1. Splitting the archive into smaller parts\n2. Processing specific files instead of the entire archive"
+    )]
+    TooManyArchiveEntries {
+        path: PathBuf,
+        count: usize,
+        limit: usize,
+    },
+
+    #[error(
+        "Archive entry '{entry}' in '{archive}' is {size} bytes, exceeding the limit of {limit} bytes\n\nThis file is too large to process safely. Consider:\n1. Processing this file separately outside the archive\n2. Splitting the file into smaller chunks"
+    )]
+    ArchiveEntryTooLarge {
+        archive: PathBuf,
+        entry: String,
+        size: u64,
+        limit: u64,
+    },
+
+    #[error(
+        "Failed to read from archive: {details}\n\nThis may indicate:\n1. Corrupted compressed data\n2. Unsupported compression method\n3. I/O errors during decompression"
+    )]
+    ArchiveReadError { details: String },
+
+    #[error(
+        "Archive operation timed out after {elapsed:?}\n\nThe archive '{path}' is taking too long to process. This could indicate:\n1. Extremely large or complex compression\n2. System resource constraints\n3. Corrupted data causing decompression loops"
+    )]
+    ArchiveTimeout {
+        path: PathBuf,
+        elapsed: std::time::Duration,
+    },
+
+    #[error(
+        "Invalid archive format for '{path}'\nExpected: {expected}\nActual: {actual}\n\nThe file extension doesn't match the actual format. Please rename the file or specify the correct format."
+    )]
+    InvalidArchiveFormat {
+        path: PathBuf,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("Archive entry not found: {archive}:{entry}")]
+    ArchiveEntryNotFound { archive: PathBuf, entry: String },
+
+    #[error("Mixed archive and filesystem sources are not supported in the same operation")]
+    MixedSourceVerification,
+
+    #[error(
+        "Hash computation error: {details}\n\nThis could indicate:\n1. Internal hash algorithm failure\n2. Memory allocation issues\n3. System resource constraints"
+    )]
+    HashingError { details: String },
+
+    // ============================================================================
+    // Pretty Printing Errors
+    // ============================================================================
+    #[error(
+        "Invalid hash format: '{hash}' is not a valid hexadecimal hash\n\nHashes must contain only characters 0-9 and a-f (case insensitive).\nExample: 'a1b2c3d4e5f6789abcdef1234567890'"
+    )]
+    InvalidHashFormat { hash: String },
+
+    #[error(
+        "Empty hash value provided\n\nA hash value is required but an empty string was given.\nPlease provide a valid hash string."
+    )]
+    EmptyHash,
+
+    #[error(
+        "Failed to write output to stderr: {details}\n\nThis may occur if:\n1. stderr is redirected to a closed pipe\n2. The terminal is disconnected\n3. Disk is full\n\nTry running without output redirection or check disk space."
+    )]
+    StderrWriteError {
+        details: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error(
+        "Table formatting failed: {details}\n\nThis is an internal error in the pretty-printing system.\nPlease report this issue with the full error message."
+    )]
+    TableFormattingError { details: String },
+
+    #[error(
+        "Path conversion failed for '{path}'\n\nThe file path contains invalid UTF-8 characters.\nPlease ensure all file paths use valid UTF-8 encoding."
+    )]
+    InvalidPathEncoding { path: String },
+
+    #[error(
+        "Exceeded maximum file batch size: found {found} files, but the limit is {limit}\n\nThis limit exists to prevent memory exhaustion. You can:\n1. Hash a smaller directory tree\n2. Use more specific filters:\n   checkle hash <path> --include '*.fastq' --exclude '**/temp/**'\n3. If your system has sufficient memory, increase the limit:\n   checkle hash <path> --max-files-batch 50000"
+    )]
+    ExceededFileBatchSize { found: usize, limit: usize },
+
     #[error("Unknown error encountered.")]
     UnknownError(#[from] color_eyre::Report),
 }
@@ -752,7 +868,50 @@ mod tests {
         }
     }
 
-    // Test 22: Stress test - error handling under load
+    // Test 22: Normal operation - error formatting for ExceededFileBatchSize
+    #[test]
+    fn test_exceeded_file_batch_size_error_formatting() {
+        let error = CheckleError::ExceededFileBatchSize {
+            found: 15000,
+            limit: 10000,
+        };
+
+        let error_string = format!("{}", error);
+        assert!(
+            error_string.contains("Exceeded maximum file batch size"),
+            "Error should describe batch size exceeded"
+        );
+        assert!(
+            error_string.contains("found 15000 files"),
+            "Error should show actual count"
+        );
+        assert!(
+            error_string.contains("limit is 10000"),
+            "Error should show limit"
+        );
+        assert!(
+            error_string.contains("Hash a smaller directory tree"),
+            "Error should suggest solutions"
+        );
+        assert!(
+            error_string.contains("checkle hash <path> --max-files-batch"),
+            "Error should show exact command example"
+        );
+
+        // Test Debug formatting
+        let debug_string = format!("{:?}", error);
+        assert!(
+            debug_string.contains("ExceededFileBatchSize"),
+            "Debug should show error variant"
+        );
+        assert!(
+            debug_string.contains("15000"),
+            "Debug should show found count"
+        );
+        assert!(debug_string.contains("10000"), "Debug should show limit");
+    }
+
+    // Test 23: Stress test - error handling under load
     #[test]
     fn test_error_handling_stress() {
         use std::time::Instant;

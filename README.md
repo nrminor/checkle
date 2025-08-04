@@ -5,11 +5,11 @@ chuckle.
 
 ### Overview
 
-I work in genomics. This means I often transfer handfuls of files from
+I work in genomics. This means I often transfer batches of data files from
 sequencing cores, where each file can be as much as a half-a-terabyte. As such,
 checking the integrity of these files post-transfer can be an arduous,
 time-consuming task. To run checksums, it's not unusual to stay in one's
-scripting comfort zone, write a shell or Python for loop, and run `checksum` or
+scripting comfort zone, write a shell or Python for loop, and run `md5sum` or
 some other single-threaded utility on a file in each iteration, waiting however
 long it takes for the serial integrity checks to finish. This process can be
 agonizingly slow, and without good reason: modern CPUs come with the ability to
@@ -19,50 +19,85 @@ possible by SSD storage on the table. We can do better and get to the fun
 part--analyzing data and doing science--faster.
 
 `checkle` aims to make slow, serial checksums obsolete and bring file integrity
-checks into the multicore era. It performs parallelized checksums on batches of
-files transferred over the interwebs, using
+checks into the multicore era. It performs checksums on batches of files using
 [Merkle Trees](https://en.wikipedia.org/wiki/Merkle_tree) and
 [SIMD](https://en.wikipedia.org/wiki/Single_instruction,_multiple_data) to
-accelerate hashing on multicore machines.
+parallelize and accelerate hashing. It also comes with a variety of
+quality-of-life features including progress bars, customizable recursive
+directory traversal, multiple report formats, sophisticated logging, and more.
 
 ### Features
 
 - Equivalent but modernized user experience to `checksum`
 - Each file is hashed in parallel chunks; in total, the time to check a single
   file will be close to a function of the file size divided by your number of
-  cores
-- Many files throughout a file hierachically can be hashed or checked
-  recursively, with optional include or exclude filters to hash just the files
-  you're interested in
+  cores. And unlike other performant file integrity checkers, you don't need to
+  switch to a new hashing algorithm to benefit from this multicore speedup--your
+  legacy md5 or sha2 checksum files are fully compatible with `checkle`.
+- Many files throughout a file hierarchy can be hashed or checked recursively,
+  with optional include or exclude filters to hash/verify just the files you're
+  interested in
 - Support for running checks on files _within_ TAR and ZIP archives without
-  extracting and decompressing files from them (WIP!)
+  extracting and decompressing files from them
 - Check successes and failures can be pretty-printed to standard output or
-  written as CSV or JSON
-- Multiple hashing algorithms including SHA2 and MD5 are supported
+  written as CSV or JSON for your post-processing convenience
+- Multiple hashing algorithms including SHA2 and MD5 are supported, with support
+  for more algorithms, e.g. BLAKE3, planned for the future
+- Sophisticated logging, helpful error messages, and a full test suite
+- A (planned) deterministic simulation testing engine to guarantee robustness
 
-### Development Goals
+### Installation
 
-I have the following goals for `checkle`:
+### Basic Usage
 
-- [x] Spread hashing across as many (virtual) cores as possible using
-      [Merkle Trees](https://en.wikipedia.org/wiki/Merkle_tree) (for the heads:
-      `checkle` is a portmanteau of checksum and Merkle).
-- [x] If a manifest of hashes from the source server is provided, spread
-      post-transfer checksums across cores as well.
-- [x] Support md5 for backward compatibility along with at least one more
-      cryptographically secure hashing function.
-- [ ] Be capable of reaching into `tar` and `zip` archives to checksum files
-      without decompressing the whole archive.
-- [x] Have an easy-to-use command line interface powered by
-      [`clap`](https://docs.rs/clap/latest/clap/).
-- [ ] Be easy to install through [crates.io](https://crates.io/) as well as with
-      binaries for your platform of choice distributed in this repo.
-- [x] Pretty-print a report to `stderr` on which files should be re-transferred.
+#### Regular File Operations
 
-`checkle` will be made available on [crates.io](https://crates.io/) when it
-reaches a reasonable level of stability.
+```bash
+# Hash a single file
+checkle hash myfile.txt
 
-### Testing
+# Verify a file against a known hash
+checkle verify myfile.txt --hash abcdef1234567890abcdef1234567890
+
+# Batch verify multiple files from a checksum file
+checkle verify-many --checksum-file checksums.md5
+```
+
+#### Archive Support
+
+checkle provides comprehensive support for TAR (.tar, .tar.gz, .tar.bz2, .tar.xz, .tgz) and ZIP archives:
+
+```bash
+# Hash a specific file within an archive
+checkle hash archive.tar:path/to/file.txt
+
+# Verify a specific file within an archive
+checkle verify archive.tar:file.txt --hash abcdef1234567890abcdef1234567890
+
+# Hash all files within an archive (archive traversal)
+checkle hash archive.tar --recursive
+
+# Verify files referenced from within archives using checksum file
+checkle verify-many --checksum-file checksums_in_archive.md5
+# Where checksums_in_archive.md5 contains lines like:
+# abcdef1234567890  archive.tar:file1.txt
+# 1234567890abcdef  archive.tar:subdir/file2.txt
+```
+
+#### Advanced Options
+
+```bash
+# Use SHA256 instead of MD5
+checkle hash myfile.txt --algorithm sha256
+
+# Recursive directory hashing with pattern filtering
+checkle hash /path/to/dir --recursive --include "*.fastq.gz"
+
+# Pretty formatted output
+checkle hash myfile.txt --pretty
+```
+
+### Testing and Contributing
 
 `checkle` includes comprehensive test suites to ensure correctness and
 performance. There are three types of tests:

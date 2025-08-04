@@ -332,7 +332,7 @@ fn read_and_hash_region<D: Digest + Default + Send + Sync, const N: usize>(
     Ok(hash_results)
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum HashingAlgo {
     #[default]
     Md5,
@@ -1184,7 +1184,7 @@ impl<'a, const N: usize> Hasher<'a, N> {
 }
 
 pub struct HashArray<const N: usize> {
-    hashes: Vec<[u8; N]>,
+    pub(crate) hashes: Vec<[u8; N]>,
 }
 
 pub trait MerkleIter<const N: usize> {
@@ -1272,6 +1272,7 @@ impl FilesToCheck {
     /// Panics if:
     /// - The files list is empty
     /// - The number of files exceeds `MAX_FILES_IN_BATCH` (10,000)
+    #[allow(clippy::print_stdout)]
     pub fn checksum_all(self, algo: &HashingAlgo) -> Result<()> {
         // Precondition assertions
         let files_vec = self.to_vec();
@@ -1384,8 +1385,11 @@ mod tests {
         clippy::expect_used,
         clippy::uninlined_format_args,
         clippy::missing_panics_doc,
-        clippy::items_after_statements
+        clippy::items_after_statements,
+        clippy::print_stderr,
+        clippy::print_stdout
     )]
+
     use super::*;
     use proptest::prelude::*;
     use proptest::test_runner::FileFailurePersistence;

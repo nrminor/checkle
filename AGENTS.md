@@ -13,6 +13,8 @@ understand ALL of the following documents:
 3. **TIGER_STYLE.md** - World-class software robustness principles (if not
    available locally, read from
    https://raw.githubusercontent.com/tigerbeetle/tigerbeetle/refs/heads/main/docs/TIGER_STYLE.md)
+4. **GRUG BRAIN DEVELOPER** - Pragmatic simplicity principles (read from
+   https://grugbrain.dev/)
 
 **Work performed without reviewing these documents is UNACCEPTABLE.** These
 documents contain essential information about project goals, coding standards,
@@ -100,6 +102,31 @@ ready for review without FIRST running:**
 
 **NO EXCEPTIONS.** Any claim of completion without these checks is unacceptable.
 
+### Lint Allowance Rule (NON-NEGOTIABLE)
+
+**CRITICAL**: It is ABSOLUTELY FORBIDDEN to add any `#[allow()]` lint suppressions without explicit permission from the project maintainer. This includes but is not limited to:
+
+- `#[allow(clippy::...)]`
+- `#[allow(dead_code)]`
+- `#[allow(unused_variables)]` 
+- `#[allow(unused_imports)]`
+- Any other lint suppression directive
+
+**RATIONALE**: This codebase's safety net depends on defaulting to opt-out for lint rules instead of opt-in. Lint allowances bypass the strict quality controls that ensure code correctness and maintainability.
+
+**EXCEPTIONS**: Some allowances are necessary and pre-approved:
+- `#[allow(clippy::print_stdout)]` for functions that write to stdout for Unix pipeline compatibility
+- Allowances explicitly documented in existing code with clear justification
+
+**PROCEDURE**: 
+1. **Never add lint allowances during development**
+2. **Fix the underlying issue** that triggers the lint warning
+3. **If an allowance is truly necessary**, ask for explicit permission first
+4. **All lint allowances must be reviewed** before final quality checks
+5. **Remove any temporary allowances** before declaring work complete
+
+**ENFORCEMENT**: Any contribution that includes unauthorized lint allowances will be rejected, regardless of functionality completeness.
+
 ### The Three-Test Rule (MANDATORY)
 
 **MANDATORY FOR ALL CODE CHANGES**: Every update to ANY part of the codebase
@@ -126,6 +153,38 @@ Key principles to apply:
   etc.)
 - **Function Size**: Soft limit of 70 lines per function
 - **Positive Invariants**: Check what should be true, not what shouldn't
+
+### Grug Brain Developer Principles
+
+**CRITICAL**: This project embraces Grug Brain philosophy alongside Tiger Style.
+Both must be balanced: Tiger Style for robustness, Grug Brain for simplicity.
+
+Key Grug Brain principles to follow:
+
+- **Complexity is Enemy #1**: Always choose the simpler solution. If explaining
+  the code requires a whiteboard, it's too complex.
+- **Say No to Features**: Not every feature request needs implementation. Prefer
+  80/20 solutions that deliver most value with minimal code.
+- **Wait for Cut Points**: Don't factor code too early. Let natural boundaries
+  emerge before creating abstractions.
+- **Small Refactors Only**: Keep refactoring incremental. Big rewrites are where
+  complexity demons hide.
+- **Integration Tests Best**: Focus on integration tests over unit tests. Test
+  the behavior users care about, not implementation details.
+- **Tools Are Friends**: Master your debugger, use code completion, invest in
+  tooling that reduces cognitive load.
+- **Avoid Type Astronautics**: Use types for clarity and safety, but avoid
+  overly complex type gymnastics. Keep generics simple.
+- **Respect Chesterton's Fence**: Understand why code exists before changing it.
+  That "ugly" code might handle edge cases you haven't considered.
+- **Premature Optimization Bad**: Make it work, make it right, then (maybe)
+  make it fast. Profile before optimizing.
+- **API Simplicity**: Design APIs that are hard to misuse. If it requires
+  extensive documentation, it's too complex.
+
+**BALANCE PRINCIPLE**: When Tiger Style (robustness) and Grug Brain (simplicity)
+conflict, prefer the solution that is both robust AND simple. If impossible,
+document the tradeoff explicitly.
 
 ### Entropy Awareness
 
@@ -674,13 +733,16 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 When helping with this project:
 
-1. **ALWAYS** read AGENTS.md and README.md first
+1. **ALWAYS** read AGENTS.md, README.md, TIGER_STYLE.md, and grugbrain.dev first
 2. **ALWAYS** run quality checks before claiming completion
 3. **ALWAYS** include 3+ tests with every change
-4. **ALWAYS** apply Tiger Style principles
-5. **ALWAYS** consider performance implications
-6. **ALWAYS** provide helpful error messages
-7. Focus on bioinformatics use cases
+4. **ALWAYS** apply Tiger Style principles for robustness
+5. **ALWAYS** apply Grug Brain principles for simplicity
+6. **ALWAYS** consider performance implications
+7. **ALWAYS** provide helpful error messages
+8. **ALWAYS** choose simple solutions over complex ones
+9. Focus on bioinformatics use cases
 
 Remember: This tool must handle terabyte-scale genomics files efficiently.
-Performance and correctness are paramount.
+Performance, correctness, and simplicity are paramount. When in doubt, choose
+the simpler solution that still meets performance requirements.
