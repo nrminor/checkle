@@ -435,23 +435,25 @@ fn test_cli_output_format_consistency_integration() {
     let test_content = b"Format consistency test";
     fs::write(temp_file.path(), test_content).expect("Failed to write test content");
 
-    // Test MD5 output format
+    // Test MD5 output format with --absolute-paths flag
     let mut md5_cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     let md5_output = md5_cmd
         .arg("--algorithm")
         .arg("md5")
         .arg("hash")
+        .arg("--absolute-paths")
         .arg(temp_file.path())
         .output()
         .expect("Failed to run MD5 command");
     let md5_stdout = String::from_utf8(md5_output.stdout).expect("MD5 output should be UTF-8");
 
-    // Test SHA256 output format
+    // Test SHA256 output format with --absolute-paths flag
     let mut sha_cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     let sha_output = sha_cmd
         .arg("--algorithm")
         .arg("sha256")
         .arg("hash")
+        .arg("--absolute-paths")
         .arg(temp_file.path())
         .output()
         .expect("Failed to run SHA256 command");
@@ -602,9 +604,10 @@ fn test_cli_path_handling_integration() {
     let test_content = b"Path handling test";
     fs::write(temp_file.path(), test_content).expect("Failed to write test content");
 
-    // Test with absolute path
+    // Test with absolute path - use --absolute-paths flag to preserve absolute paths in output
     let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     cmd.arg("hash")
+        .arg("--absolute-paths")
         .arg(temp_file.path()) // This is already an absolute path
         .assert()
         .success()

@@ -292,6 +292,15 @@ pub enum Commands {
             action = ArgAction::SetTrue
         )]
         no_progress: NoProgress,
+
+        #[arg(
+            short = 'A',
+            long = "absolute-paths",
+            help = "Display absolute paths instead of relative paths",
+            help_heading = "Output Options",
+            action = ArgAction::SetTrue
+        )]
+        absolute_paths: AbsolutePaths,
     },
 
     #[clap(
@@ -360,6 +369,15 @@ pub enum Commands {
             action = ArgAction::SetTrue
         )]
         no_progress: NoProgress,
+
+        #[arg(
+            short = 'A',
+            long = "absolute-paths",
+            help = "Display absolute paths instead of relative paths",
+            help_heading = "Output Options",
+            action = ArgAction::SetTrue
+        )]
+        absolute_paths: AbsolutePaths,
     },
 
     #[clap(
@@ -460,6 +478,15 @@ pub enum Commands {
             action = ArgAction::SetTrue
         )]
         no_ignore: bool,
+
+        #[arg(
+            short = 'A',
+            long = "absolute-paths",
+            help = "Display absolute paths instead of relative paths",
+            help_heading = "Output Options",
+            action = ArgAction::SetTrue
+        )]
+        absolute_paths: AbsolutePaths,
     },
 
     #[clap(
@@ -703,6 +730,9 @@ pub type NoProgress = bool;
 /// When true, processes files that would normally be ignored by .gitignore rules.
 pub type NoIgnore = bool;
 
+/// When true, displays absolute paths instead of relative paths in output.
+pub type AbsolutePaths = bool;
+
 mod utils {
     use crate::errors::CheckleError;
 
@@ -846,11 +876,7 @@ mod tests {
 
         match cli.command {
             Some(Commands::Verify {
-                input_file,
-                hash,
-                per_file: _,
-                pretty: _,
-                no_progress: _,
+                input_file, hash, ..
             }) => {
                 assert_eq!(input_file, PathBuf::from("/path/to/file.txt"));
                 assert_eq!(hash, Some("abcdef1234567890abcdef1234567890".to_string()));
@@ -890,16 +916,7 @@ mod tests {
         let cli = Cli::try_parse_from(args).expect("Should parse verify-many command");
 
         match cli.command {
-            Some(Commands::VerifyMany {
-                checksum_file,
-                per_file: _,
-                files: _,
-                pretty: _,
-                report: _,
-                format: _,
-                max_files_batch: _,
-                no_progress: _,
-            }) => {
+            Some(Commands::VerifyMany { checksum_file, .. }) => {
                 assert_eq!(checksum_file, Some(PathBuf::from("/path/to/checksums.txt")));
             }
             _ => panic!("Expected VerifyMany command"),

@@ -2,10 +2,10 @@
 
 use crate::{
     archive_path,
-    cli::{NoProgress, OutputFormat, PerFileMode, PrettyPrint},
+    cli::{AbsolutePaths, NoProgress, OutputFormat, PerFileMode, PrettyPrint},
     data_source::DataSource,
     errors::{CheckleError, Result},
-    io::FilesToCheck,
+    io::{FilesToCheck, PathDisplayMode, format_path_for_display},
     prelude::*,
     prettyprint::{
         VerificationResult, VerificationStatus, display_verification_table_with_summary,
@@ -34,6 +34,7 @@ pub struct VerifyManyConfig<'a> {
     pub parallel_readers: usize,
     pub max_files_batch: usize,
     pub no_progress: NoProgress,
+    pub absolute_paths: AbsolutePaths,
 }
 
 impl VerifyManyConfig<'_> {
@@ -118,6 +119,7 @@ pub fn execute(
     parallel_readers: usize,
     max_files_batch: usize,
     no_progress: NoProgress,
+    absolute_paths: AbsolutePaths,
 ) -> Result<()> {
     let config = VerifyManyConfig {
         checksum_file,
@@ -131,6 +133,7 @@ pub fn execute(
         parallel_readers,
         max_files_batch,
         no_progress,
+        absolute_paths,
     };
 
     config.execute_verification()
@@ -196,11 +199,12 @@ impl VerifyManyConfig<'_> {
                 self.report,
                 self.format,
                 self.pretty,
+                self.absolute_paths,
             )?;
         } else if self.pretty {
             display_verification_results_pretty(&verification_results)?;
         } else {
-            output_structured_verification(&verification_results)?;
+            output_structured_verification(&verification_results, self.absolute_paths)?;
         }
 
         // Check if any verifications failed
@@ -368,6 +372,7 @@ impl VerifyManyConfig<'_> {
                 self.report,
                 self.format,
                 self.pretty,
+                self.absolute_paths,
             )?;
         } else if self.pretty {
             display_verification_results_pretty(&verification_results)?;
@@ -516,6 +521,7 @@ fn output_verification_report(
     report: Option<&Path>,
     format: Option<OutputFormat>,
     pretty: PrettyPrint,
+    absolute_paths: AbsolutePaths,
 ) -> Result<()> {
     // Detect format from file extension if not explicitly provided
     let output_format = if let Some(fmt) = format {
@@ -554,8 +560,13 @@ fn output_verification_report(
         return Err(CheckleError::MultipleFailedChecksums);
     }
 
-    let formatted_output =
-        format_verification_output_with_pretty(&successful_results, output_format, pretty);
+    let path_mode = PathDisplayMode::from_flag(absolute_paths);
+    let formatted_output = format_verification_output_with_pretty(
+        &successful_results,
+        output_format,
+        pretty,
+        path_mode,
+    );
 
     if let Some(report_path) = report {
         // Write to file
@@ -600,6 +611,7 @@ fn display_verification_results_pretty(
 #[allow(clippy::print_stdout)]
 fn output_structured_verification(
     verification_results: &[Result<VerificationResult>],
+    absolute_paths: AbsolutePaths,
 ) -> Result<()> {
     // Collect all output lines first to print as a single block (avoids interleaving with logs)
     let mut output_lines = Vec::with_capacity(verification_results.len());
@@ -610,15 +622,36 @@ fn output_structured_verification(
         match result {
             Ok(verification_result) => match verification_result.status() {
                 VerificationStatus::Pass => {
-                    output_lines.push(format!("PASS\t{}", verification_result.file().display()));
-                    info!("Verified: {}", verification_result.file().display());
+                    output_lines.push(format!(
+                        "PASS\t{}",
+                        format_path_for_display(
+                            verification_result.file(),
+                            PathDisplayMode::from_flag(absolute_paths)
+                        )
+                    ));
+                    info!(
+                        "Verified: {}",
+                        format_path_for_display(
+                            verification_result.file(),
+                            PathDisplayMode::from_flag(absolute_paths)
+                        )
+                    );
                     successful_count += 1;
                 }
                 VerificationStatus::Fail => {
-                    output_lines.push(format!("FAIL\t{}", verification_result.file().display()));
+                    output_lines.push(format!(
+                        "FAIL\t{}",
+                        format_path_for_display(
+                            verification_result.file(),
+                            PathDisplayMode::from_flag(absolute_paths)
+                        )
+                    ));
                     error!(
                         "Verification failed for {}: {}",
-                        verification_result.file().display(),
+                        format_path_for_display(
+                            verification_result.file(),
+                            PathDisplayMode::from_flag(absolute_paths)
+                        ),
                         verification_result
                             .error_message()
                             .unwrap_or("Hash mismatch")
@@ -626,15 +659,36 @@ fn output_structured_verification(
                     failed_files.push(verification_result.file().to_path_buf());
                 }
                 VerificationStatus::Missing => {
-                    output_lines.push(format!("MISS\t{}", verification_result.file().display()));
-                    error!("File not found: {}", verification_result.file().display());
+                    output_lines.push(format!(
+                        "MISS\t{}",
+                        format_path_for_display(
+                            verification_result.file(),
+                            PathDisplayMode::from_flag(absolute_paths)
+                        )
+                    ));
+                    error!(
+                        "File not found: {}",
+                        format_path_for_display(
+                            verification_result.file(),
+                            PathDisplayMode::from_flag(absolute_paths)
+                        )
+                    );
                     failed_files.push(verification_result.file().to_path_buf());
                 }
                 VerificationStatus::Error(_) => {
-                    output_lines.push(format!("ERROR\t{}", verification_result.file().display()));
+                    output_lines.push(format!(
+                        "ERROR\t{}",
+                        format_path_for_display(
+                            verification_result.file(),
+                            PathDisplayMode::from_flag(absolute_paths)
+                        )
+                    ));
                     error!(
                         "Error verifying {}: {}",
-                        verification_result.file().display(),
+                        format_path_for_display(
+                            verification_result.file(),
+                            PathDisplayMode::from_flag(absolute_paths)
+                        ),
                         verification_result
                             .error_message()
                             .unwrap_or("Unknown error")
@@ -969,21 +1023,22 @@ fn format_verification_output_with_pretty(
     results: &[VerificationResult],
     format: OutputFormat,
     pretty: PrettyPrint,
+    path_mode: PathDisplayMode,
 ) -> String {
     match format {
-        OutputFormat::Text => format_text_output(results),
-        OutputFormat::Csv => format_csv_output(results),
-        OutputFormat::Json => format_json_output_with_pretty(results, pretty),
+        OutputFormat::Text => format_text_output(results, path_mode),
+        OutputFormat::Csv => format_csv_output(results, path_mode),
+        OutputFormat::Json => format_json_output_with_pretty(results, pretty, path_mode),
     }
 }
 
-fn format_text_output(results: &[VerificationResult]) -> String {
+fn format_text_output(results: &[VerificationResult], path_mode: PathDisplayMode) -> String {
     let mut output = String::from(
         "file_path\tstatus\texpected_hash\tcomputed_hash\tfile_size_bytes\tmodified_time\terror_message\n",
     );
 
     for result in results {
-        let file_path = result.file().to_string_lossy();
+        let file_path = format_path_for_display(result.file(), path_mode);
         let status = result.status().display_string();
         let expected_hash = result.expected_hash();
         let computed_hash = if result.actual_hash().is_empty() {
@@ -1010,13 +1065,13 @@ fn format_text_output(results: &[VerificationResult]) -> String {
     output.trim_end().to_string()
 }
 
-fn format_csv_output(results: &[VerificationResult]) -> String {
+fn format_csv_output(results: &[VerificationResult], path_mode: PathDisplayMode) -> String {
     let mut output = String::from(
         "file_path,status,expected_hash,computed_hash,file_size_bytes,modified_time,error_message\n",
     );
 
     for result in results {
-        let file_path = result.file().to_string_lossy();
+        let file_path = format_path_for_display(result.file(), path_mode);
         let status = result.status().display_string();
         let expected_hash = result.expected_hash();
         let computed_hash = if result.actual_hash().is_empty() {
@@ -1056,19 +1111,26 @@ fn format_csv_output(results: &[VerificationResult]) -> String {
     output.trim_end().to_string()
 }
 
-fn format_json_output_with_pretty(results: &[VerificationResult], pretty: bool) -> String {
+fn format_json_output_with_pretty(
+    results: &[VerificationResult],
+    pretty: bool,
+    path_mode: PathDisplayMode,
+) -> String {
     if pretty {
-        format_json_output_pretty(results)
+        format_json_output_pretty(results, path_mode)
     } else {
-        format_json_output_compact(results)
+        format_json_output_compact(results, path_mode)
     }
 }
 
-fn format_json_output_compact(results: &[VerificationResult]) -> String {
+fn format_json_output_compact(
+    results: &[VerificationResult],
+    path_mode: PathDisplayMode,
+) -> String {
     let mut json_objects = Vec::new();
 
     for result in results {
-        let file_path = result.file().to_string_lossy();
+        let file_path = format_path_for_display(result.file(), path_mode);
         let status = result.status().display_string();
         let expected_hash = result.expected_hash();
         let computed_hash = if result.actual_hash().is_empty() {
@@ -1099,10 +1161,10 @@ fn format_json_output_compact(results: &[VerificationResult]) -> String {
     format!("[{}]", json_objects.join(","))
 }
 
-fn format_json_output_pretty(results: &[VerificationResult]) -> String {
+fn format_json_output_pretty(results: &[VerificationResult], path_mode: PathDisplayMode) -> String {
     let mut output = String::from("[\n");
     for (i, result) in results.iter().enumerate() {
-        let file_path = result.file().to_string_lossy();
+        let file_path = format_path_for_display(result.file(), path_mode);
         let status = result.status().display_string();
         let expected_hash = result.expected_hash();
         let computed_hash = if result.actual_hash().is_empty() {

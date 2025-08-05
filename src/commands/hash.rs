@@ -6,9 +6,9 @@ use crate::archive::TarArchive;
 use crate::archive::ZipArchive;
 use crate::{
     archive_path,
-    cli::{NoIgnore, NoProgress, OutputFormat, PerFileMode, PrettyPrint, Recursive},
+    cli::{AbsolutePaths, NoIgnore, NoProgress, OutputFormat, PerFileMode, PrettyPrint, Recursive},
     errors::{CheckleError, Result},
-    io::{FileFilterConfig, FileHashPair, collect_files},
+    io::{FileFilterConfig, FileHashPair, PathDisplayMode, collect_files, format_path_for_display},
     prelude::*,
     prettyprint::{FileHashPairWithMetadata, convert_to_basic_pairs, display_pretty_table},
     progress::ProgressManager,
@@ -38,6 +38,7 @@ pub struct HashConfig<'a> {
     pub chunk_size_kb: usize,
     pub parallel_readers: usize,
     pub max_files_batch: usize,
+    pub absolute_paths: AbsolutePaths,
 }
 
 impl HashConfig<'_> {
@@ -126,6 +127,7 @@ pub fn execute(
     chunk_size_kb: usize,
     parallel_readers: usize,
     max_files_batch: usize,
+    absolute_paths: AbsolutePaths,
 ) -> Result<()> {
     let config = HashConfig {
         input_file,
@@ -142,6 +144,7 @@ pub fn execute(
         chunk_size_kb,
         parallel_readers,
         max_files_batch,
+        absolute_paths,
     };
 
     config.execute_hash()
@@ -230,10 +233,12 @@ impl HashConfig<'_> {
             write_per_file_hash(self.input_file, &hash, self.algo)?;
         } else if let Some(output_path) = self.hash_output {
             let output_format = self.format.unwrap_or(OutputFormat::Text);
+            let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
             let formatted_output = format_output_with_pretty(
                 &convert_to_basic_pairs(file_hash_pairs.clone()),
                 output_format,
                 self.pretty,
+                path_mode,
             );
             std::fs::write(output_path, formatted_output).map_err(|e| {
                 CheckleError::FileOpenError {
@@ -245,10 +250,12 @@ impl HashConfig<'_> {
             display_pretty_table(&file_hash_pairs)?;
         } else {
             let output_format = self.format.unwrap_or(OutputFormat::Text);
+            let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
             let formatted_output = format_output_with_pretty(
                 &convert_to_basic_pairs(file_hash_pairs),
                 output_format,
                 false,
+                path_mode,
             );
             println!("{formatted_output}");
         }
@@ -369,6 +376,7 @@ impl HashConfig<'_> {
             self.hash_output,
             output_format,
             self.pretty,
+            self.absolute_paths,
             self.algo,
         )
     }
@@ -384,6 +392,7 @@ impl HashConfig<'_> {
             self.hash_output,
             self.format,
             self.pretty,
+            self.absolute_paths,
         )
     }
 }
@@ -396,6 +405,7 @@ fn handle_hash_output(
     hash_output: Option<&Path>,
     output_format: OutputFormat,
     pretty: PrettyPrint,
+    absolute_paths: AbsolutePaths,
     algo: HashingAlgo,
 ) -> Result<()> {
     if per_file {
@@ -410,7 +420,12 @@ fn handle_hash_output(
         if !pretty {
             println!(
                 "{}",
-                format_output_with_pretty(file_hash_pairs, output_format, pretty)
+                format_output_with_pretty(
+                    file_hash_pairs,
+                    output_format,
+                    pretty,
+                    PathDisplayMode::from_flag(absolute_paths)
+                )
             );
         }
     } else if let Some(output_path) = hash_output {
@@ -433,7 +448,12 @@ fn handle_hash_output(
             })?;
 
         let mut writer = BufWriter::new(checksum_file);
-        let formatted_output = format_output_with_pretty(file_hash_pairs, output_format, pretty);
+        let formatted_output = format_output_with_pretty(
+            file_hash_pairs,
+            output_format,
+            pretty,
+            PathDisplayMode::from_flag(absolute_paths),
+        );
         debug!(
             "Writing {} formatted hash records...",
             file_hash_pairs.len()
@@ -452,7 +472,12 @@ fn handle_hash_output(
         // Do NOT print to stdout when output file is specified
     } else {
         // Default behavior: output only to stdout (no file creation)
-        let formatted_output = format_output_with_pretty(file_hash_pairs, output_format, pretty);
+        let formatted_output = format_output_with_pretty(
+            file_hash_pairs,
+            output_format,
+            pretty,
+            PathDisplayMode::from_flag(absolute_paths),
+        );
         debug!(
             "Writing {} formatted hash records to stdout...",
             file_hash_pairs.len()
@@ -522,6 +547,7 @@ struct ArchiveHashConfig<'a> {
     hash_output: Option<&'a Path>,
     format: Option<OutputFormat>,
     pretty: PrettyPrint,
+    absolute_paths: AbsolutePaths,
 }
 
 /// Hash all entries in an archive file.
@@ -536,6 +562,7 @@ fn hash_archive_entries(
     hash_output: Option<&Path>,
     format: Option<OutputFormat>,
     pretty: PrettyPrint,
+    absolute_paths: AbsolutePaths,
 ) -> Result<()> {
     let config = ArchiveHashConfig {
         archive_path,
@@ -546,6 +573,7 @@ fn hash_archive_entries(
         hash_output,
         format,
         pretty,
+        absolute_paths,
     };
     config.hash_entries()
 }
@@ -614,6 +642,7 @@ impl ArchiveHashConfig<'_> {
             self.format,
             self.pretty,
             &progress_manager,
+            self.absolute_paths,
         )
     }
 
@@ -648,6 +677,7 @@ impl ArchiveHashConfig<'_> {
             self.format,
             self.pretty,
             &progress_manager,
+            self.absolute_paths,
         )
     }
 }
@@ -662,6 +692,7 @@ struct ArchiveEntryHashConfig<'a> {
     format: Option<OutputFormat>,
     pretty: bool,
     progress_manager: &'a ProgressManager,
+    absolute_paths: AbsolutePaths,
 }
 
 // TODO: Remove this function once all callers use ArchiveEntryHashConfig directly
@@ -676,6 +707,7 @@ fn hash_archive_entry_paths(
     format: Option<OutputFormat>,
     pretty: PrettyPrint,
     progress_manager: &ProgressManager,
+    absolute_paths: AbsolutePaths,
 ) -> Result<()> {
     let config = ArchiveEntryHashConfig {
         archive_entries,
@@ -687,6 +719,7 @@ fn hash_archive_entry_paths(
         format,
         pretty,
         progress_manager,
+        absolute_paths,
     };
     config.hash_entries()
 }
@@ -762,10 +795,12 @@ impl ArchiveEntryHashConfig<'_> {
             }
         } else if let Some(output_path) = self.hash_output {
             let output_format = self.format.unwrap_or(OutputFormat::Text);
+            let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
             let formatted_output = format_output_with_pretty(
                 &convert_to_basic_pairs(successful_results),
                 output_format,
                 self.pretty,
+                path_mode,
             );
             std::fs::write(output_path, formatted_output).map_err(|e| {
                 CheckleError::FileOpenError {
@@ -777,10 +812,12 @@ impl ArchiveEntryHashConfig<'_> {
             display_pretty_table(&successful_results)?;
         } else {
             let output_format = self.format.unwrap_or(OutputFormat::Text);
+            let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
             let formatted_output = format_output_with_pretty(
                 &convert_to_basic_pairs(successful_results),
                 output_format,
                 false,
+                path_mode,
             );
             println!("{formatted_output}");
         }
@@ -866,13 +903,20 @@ fn format_output_with_pretty(
     file_hash_pairs: &[FileHashPair],
     format: OutputFormat,
     pretty: bool,
+    path_mode: PathDisplayMode,
 ) -> String {
     match format {
         OutputFormat::Text => {
             // Tab-delimited format: hash\tfile_path
             let lines: Vec<String> = file_hash_pairs
                 .iter()
-                .map(|file| format!("{}\t{}", file.hash(), file.file().to_string_lossy()))
+                .map(|file| {
+                    format!(
+                        "{}\t{}",
+                        file.hash(),
+                        format_path_for_display(file.file(), path_mode)
+                    )
+                })
                 .collect();
             lines.join("\n")
         }
@@ -881,7 +925,7 @@ fn format_output_with_pretty(
             let mut output = String::from("hash,filepath\n"); // Header
             for file in file_hash_pairs {
                 let hash = file.hash();
-                let filepath = file.file().to_string_lossy();
+                let filepath = format_path_for_display(file.file(), path_mode);
 
                 // Escape CSV fields if they contain special characters
                 let escaped_filepath = if filepath.contains([',', '"', '\n', '\r']) {
@@ -899,19 +943,22 @@ fn format_output_with_pretty(
             // For now, create JSON manually to avoid adding serde dependency
             // This will be replaced with proper serde serialization
             if pretty {
-                format_hash_json_pretty(file_hash_pairs)
+                format_hash_json_pretty(file_hash_pairs, path_mode)
             } else {
-                format_hash_json_compact(file_hash_pairs)
+                format_hash_json_compact(file_hash_pairs, path_mode)
             }
         }
     }
 }
 
-fn format_hash_json_compact(file_hash_pairs: &[FileHashPair]) -> String {
+fn format_hash_json_compact(
+    file_hash_pairs: &[FileHashPair],
+    path_mode: PathDisplayMode,
+) -> String {
     let mut json_objects = Vec::new();
     for file in file_hash_pairs {
         let hash = file.hash();
-        let filepath = file.file().to_string_lossy();
+        let filepath = format_path_for_display(file.file(), path_mode);
         let escaped_filepath = escape_json_string(&filepath);
         json_objects.push(format!(
             "{{\"hash\":\"{hash}\",\"filepath\":\"{escaped_filepath}\"}}"
@@ -920,11 +967,11 @@ fn format_hash_json_compact(file_hash_pairs: &[FileHashPair]) -> String {
     format!("[{}]", json_objects.join(","))
 }
 
-fn format_hash_json_pretty(file_hash_pairs: &[FileHashPair]) -> String {
+fn format_hash_json_pretty(file_hash_pairs: &[FileHashPair], path_mode: PathDisplayMode) -> String {
     let mut output = String::from("[\n");
     for (i, file) in file_hash_pairs.iter().enumerate() {
         let hash = file.hash();
-        let filepath = file.file().to_string_lossy();
+        let filepath = format_path_for_display(file.file(), path_mode);
         let escaped_filepath = escape_json_string(&filepath);
 
         output.push_str("  {\n");

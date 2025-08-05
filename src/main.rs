@@ -61,6 +61,7 @@ fn run_main() -> Result<()> {
             include,
             exclude,
             no_ignore,
+            absolute_paths,
         }) => {
             commands::hash::execute(
                 &input_file,
@@ -77,6 +78,7 @@ fn run_main() -> Result<()> {
                 cli.chunk_size_kb,
                 cli.parallel_readers,
                 cli.max_files_batch,
+                absolute_paths,
             )?;
             Ok(())
         }
@@ -88,6 +90,7 @@ fn run_main() -> Result<()> {
             per_file,
             pretty,
             no_progress,
+            absolute_paths: _, // Not used in verify command - it only outputs OK/FAILED
         }) => {
             commands::verify::execute(
                 &input_file,
@@ -112,6 +115,7 @@ fn run_main() -> Result<()> {
             format,
             max_files_batch,
             no_progress,
+            absolute_paths,
         }) => {
             commands::verify_many::execute(
                 checksum_file.as_deref(),
@@ -125,6 +129,7 @@ fn run_main() -> Result<()> {
                 cli.parallel_readers,
                 max_files_batch.unwrap_or(cli.max_files_batch),
                 no_progress,
+                absolute_paths,
             )?;
             Ok(())
         }

@@ -1002,6 +1002,165 @@ fn collect_files_recursive(
     Ok(file_paths)
 }
 
+// ============================================================================
+// Path Display Utilities
+// ============================================================================
+
+/// Controls how file paths are displayed in output
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathDisplayMode {
+    /// Display paths relative to the current working directory (default)
+    Relative,
+    /// Display absolute paths
+    Absolute,
+}
+
+impl PathDisplayMode {
+    /// Create a new `PathDisplayMode` based on the `absolute_paths` flag
+    #[must_use]
+    pub const fn from_flag(absolute_paths: bool) -> Self {
+        if absolute_paths {
+            Self::Absolute
+        } else {
+            Self::Relative
+        }
+    }
+}
+
+/// Format a path for display according to the specified mode.
+///
+/// # Arguments
+///
+/// * `path` - The path to format
+/// * `mode` - Whether to display as relative or absolute
+///
+/// # Returns
+///
+/// A string representation of the path formatted according to the mode.
+/// If the path is an archive path (contains ':'), it is returned unchanged.
+/// If relative path calculation fails, falls back to the absolute path.
+///
+/// # Panics
+///
+/// This function should not panic under normal circumstances.
+#[must_use]
+pub fn format_path_for_display(path: &Path, mode: PathDisplayMode) -> String {
+    let path_str = path.to_string_lossy();
+
+    // Archive paths have special format (archive.tar:internal/path) and should not be modified
+    if path_str.contains(':') {
+        return path_str.to_string();
+    }
+
+    match mode {
+        PathDisplayMode::Absolute => {
+            // Convert to absolute path if it's relative
+            if path.is_absolute() {
+                path_str.to_string()
+            } else {
+                // Try to make it absolute by joining with current directory
+                match env::current_dir() {
+                    Ok(cwd) => cwd.join(path).to_string_lossy().to_string(),
+                    Err(_) => path_str.to_string(), // Fall back to original if we can't get cwd
+                }
+            }
+        }
+        PathDisplayMode::Relative => {
+            // Try to get the current working directory
+            let Ok(cwd) = env::current_dir() else {
+                // If we can't get cwd, fall back to original path
+                return path_str.to_string();
+            };
+
+            // Try to make the path relative to cwd
+            match make_relative_path(path, &cwd) {
+                Some(relative) => relative.to_string_lossy().to_string(),
+                None => path_str.to_string(),
+            }
+        }
+    }
+}
+
+/// Attempt to create a relative path from `path` to `base`.
+///
+/// # Arguments
+///
+/// * `path` - The path to make relative
+/// * `base` - The base directory to make it relative to
+///
+/// # Returns
+///
+/// `Some(relative_path)` if successful, `None` if the paths don't share a common prefix
+/// or if the operation fails.
+fn make_relative_path(path: &Path, base: &Path) -> Option<PathBuf> {
+    // First, try to canonicalize both paths to resolve symlinks and get absolute paths
+    let abs_path = path.canonicalize().ok().or_else(|| {
+        // If canonicalize fails (e.g., file doesn't exist yet), try to make it absolute
+        if path.is_absolute() {
+            Some(path.to_path_buf())
+        } else {
+            env::current_dir().ok().map(|cwd| cwd.join(path))
+        }
+    })?;
+
+    let abs_base = base.canonicalize().ok()?;
+
+    // Use pathdiff crate logic to compute relative path
+    pathdiff::diff_paths(&abs_path, &abs_base)
+}
+
+/// Helper module to compute relative path without external dependencies.
+/// This is a fallback implementation if we don't want to add the pathdiff dependency.
+mod pathdiff {
+    use std::path::{Component, Path, PathBuf};
+
+    /// Compute the relative path from `base` to `path`.
+    pub fn diff_paths(path: &Path, base: &Path) -> Option<PathBuf> {
+        let mut path_components = path.components();
+        let mut base_components = base.components();
+
+        // Skip common prefix
+        loop {
+            match (
+                path_components.clone().next(),
+                base_components.clone().next(),
+            ) {
+                (Some(a), Some(b)) if a == b => {
+                    path_components.next();
+                    base_components.next();
+                }
+                _ => break,
+            }
+        }
+
+        // Count remaining components in base and add ".." for each
+        let mut result = PathBuf::new();
+        for _ in base_components {
+            result.push("..");
+        }
+
+        // Add remaining components from path
+        for component in path_components {
+            match component {
+                Component::Normal(s) => result.push(s),
+                Component::CurDir => {}
+                Component::ParentDir => result.push(".."),
+                Component::RootDir | Component::Prefix(_) => {
+                    // Can't create relative path with root or prefix in the middle
+                    return None;
+                }
+            }
+        }
+
+        // If result is empty, it means the paths are the same
+        if result.as_os_str().is_empty() {
+            result.push(".");
+        }
+
+        Some(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(
@@ -2309,5 +2468,111 @@ mod tests {
             temp_file.path(),
             "Only temp_file should remain"
         );
+    }
+
+    // ========================================================================
+    // Path Display Tests
+    // ========================================================================
+
+    #[test]
+    fn test_path_display_mode_from_flag() {
+        assert_eq!(PathDisplayMode::from_flag(false), PathDisplayMode::Relative);
+        assert_eq!(PathDisplayMode::from_flag(true), PathDisplayMode::Absolute);
+    }
+
+    #[test]
+    fn test_format_path_absolute_mode() {
+        // Test with already absolute path
+        let abs_path = Path::new("/home/user/file.txt");
+        let result = format_path_for_display(abs_path, PathDisplayMode::Absolute);
+        assert_eq!(result, "/home/user/file.txt");
+
+        // Test with relative path (will be made absolute)
+        let rel_path = Path::new("Cargo.toml");
+        let result = format_path_for_display(rel_path, PathDisplayMode::Absolute);
+        // Should contain the current directory
+        assert!(result.ends_with("Cargo.toml"));
+        assert!(result.starts_with('/') || result.starts_with("C:\\")); // Unix or Windows absolute path
+    }
+
+    #[test]
+    fn test_format_path_archive_unchanged() {
+        // Archive paths should never be modified
+        let archive_path = Path::new("archive.tar:internal/file.txt");
+
+        let result_rel = format_path_for_display(archive_path, PathDisplayMode::Relative);
+        assert_eq!(result_rel, "archive.tar:internal/file.txt");
+
+        let result_abs = format_path_for_display(archive_path, PathDisplayMode::Absolute);
+        assert_eq!(result_abs, "archive.tar:internal/file.txt");
+    }
+
+    #[test]
+    fn test_make_relative_path_same_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("file.txt");
+        fs::write(&file_path, "test").expect("Failed to write file");
+
+        let relative = make_relative_path(&file_path, temp_dir.path());
+        assert!(relative.is_some());
+        assert_eq!(
+            relative.expect("Should create relative path"),
+            PathBuf::from("file.txt")
+        );
+    }
+
+    #[test]
+    fn test_make_relative_path_subdirectory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let sub_dir = temp_dir.path().join("subdir");
+        fs::create_dir(&sub_dir).expect("Failed to create subdir");
+        let file_path = sub_dir.join("file.txt");
+        fs::write(&file_path, "test").expect("Failed to write file");
+
+        let relative = make_relative_path(&file_path, temp_dir.path());
+        assert!(relative.is_some());
+        assert_eq!(
+            relative.expect("Should create relative path"),
+            PathBuf::from("subdir/file.txt")
+        );
+    }
+
+    #[test]
+    fn test_make_relative_path_parent_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let sub_dir = temp_dir.path().join("subdir");
+        fs::create_dir(&sub_dir).expect("Failed to create subdir");
+        let file_path = temp_dir.path().join("file.txt");
+        fs::write(&file_path, "test").expect("Failed to write file");
+
+        let relative = make_relative_path(&file_path, &sub_dir);
+        assert!(relative.is_some());
+        assert_eq!(
+            relative.expect("Should create relative path"),
+            PathBuf::from("../file.txt")
+        );
+    }
+
+    #[test]
+    fn test_pathdiff_same_path() {
+        let path = Path::new("/home/user/file.txt");
+        let result = pathdiff::diff_paths(path, path);
+        assert_eq!(result, Some(PathBuf::from(".")));
+    }
+
+    #[test]
+    fn test_pathdiff_simple_relative() {
+        let path = Path::new("/home/user/documents/file.txt");
+        let base = Path::new("/home/user");
+        let result = pathdiff::diff_paths(path, base);
+        assert_eq!(result, Some(PathBuf::from("documents/file.txt")));
+    }
+
+    #[test]
+    fn test_pathdiff_with_parent_dirs() {
+        let path = Path::new("/home/user/file.txt");
+        let base = Path::new("/home/user/documents/work");
+        let result = pathdiff::diff_paths(path, base);
+        assert_eq!(result, Some(PathBuf::from("../../file.txt")));
     }
 }
