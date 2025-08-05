@@ -4,6 +4,7 @@
 //! hash generation and verification operations.
 
 use assert_cmd::Command;
+use checkle::simd;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::{NamedTempFile, TempDir};
@@ -40,10 +41,7 @@ mod per_file_mode_tests {
 
         let hash = parts[0];
         assert_eq!(hash.len(), 32, "MD5 hash should be 32 characters");
-        assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should be hexadecimal"
-        );
+        assert!(simd::is_hex_string(&hash), "Hash should be hexadecimal");
     }
 
     // Test 2: Normal operation - hash with --per-file and SHA256
@@ -76,10 +74,7 @@ mod per_file_mode_tests {
 
         let hash = parts[0];
         assert_eq!(hash.len(), 64, "SHA256 hash should be 64 characters");
-        assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should be hexadecimal"
-        );
+        assert!(simd::is_hex_string(&hash), "Hash should be hexadecimal");
     }
 
     // Test 3: Normal operation - verify with --per-file reads from file

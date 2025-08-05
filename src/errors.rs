@@ -124,6 +124,9 @@ pub enum CheckleError {
     #[error("Invalid numeric value '{value}': {reason}")]
     InvalidNumericValue { value: String, reason: String },
 
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+
     // ============================================================================
     // Archive-Related Errors
     // ============================================================================

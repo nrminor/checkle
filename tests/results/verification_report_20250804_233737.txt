@@ -1,0 +1,26 @@
+checkle Hash Verification Report
+================================
+
+Date: Mon Aug  4 23:37:52 CDT 2025
+checkle binary: /Users/nickminor/Documents/bioinformatics/checkle/target/release/checkle
+
+Test Summary:
+  Total tests: 21
+  Passed: 21
+  Failed: 0
+
+Result: ALL TESTS PASSED ✓
+
+checkle produces identical hashes to standard utilities.
+
+Files tested:
+  - all_zeros_10kb.bin
+  - binary_1kb.bin
+  - binary_1mb.bin
+  - empty.txt
+  - file1.txt
+  - file2.txt
+  - genomics_sample.fasta
+  - multiline.txt
+  - single_line.txt
+  - special_chars.txt

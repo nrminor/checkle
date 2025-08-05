@@ -16,6 +16,7 @@ default = ["archives"]
 archives = ["tar", "zip"]
 tar-only = ["tar"]
 zip-only = ["zip"]
+simd = []  # Requires nightly toolchain for portable_simd
 
 [[bin]]
 name = "checkle"
@@ -23,6 +24,10 @@ path = "src/main.rs"
 
 [[bench]]
 name = "criterion_benchmarks"
+harness = false
+
+[[bench]]
+name = "hex_conversion_bench"
 harness = false
 
 [dependencies]

@@ -8,10 +8,15 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "tar")]
+use crate::archive::TarArchive;
+#[cfg(feature = "zip")]
+use crate::archive::ZipArchive;
 use crate::archive::{ArchiveReader, MAX_ARCHIVE_SIZE};
 use crate::archive_path::ArchivePathComponents;
 use crate::constants::MAX_PATH_LENGTH;
-use crate::errors::CheckleError;
+use crate::errors::{CheckleError, Result};
+use crate::hashing::{Hasher, HashingAlgo};
 
 /// Represents the source of data for hashing operations.
 #[derive(Debug, Clone)]
@@ -76,7 +81,7 @@ impl DataSource {
     /// Panics if:
     /// - The archive entry path is empty
     /// - The entry path exceeds the maximum allowed length
-    pub fn from_archive(components: &ArchivePathComponents) -> Result<Self, CheckleError> {
+    pub fn from_archive(components: &ArchivePathComponents) -> Result<Self> {
         // Validate archive exists
         if !components.archive().exists() {
             return Err(CheckleError::InaccessibleFile(
@@ -128,7 +133,7 @@ impl DataSource {
     /// - The file cannot be opened
     /// - The archive cannot be opened
     /// - The entry doesn't exist in the archive
-    pub fn open_reader(&self) -> Result<Box<dyn Read>, CheckleError> {
+    pub fn open_reader(&self) -> Result<Box<dyn Read>> {
         match self {
             Self::Filesystem { path } => {
                 let file = File::open(path).map_err(|e| CheckleError::FileOpenError {
@@ -147,7 +152,6 @@ impl DataSource {
 
                 #[cfg(feature = "tar")]
                 if is_tar_archive(path) {
-                    use crate::archive::TarArchive;
                     let mut archive = TarArchive::open(archive_path)?;
                     return match archive.find_entry(entry_path)? {
                         Some((entry_reader, _metadata)) => Ok(Box::new(entry_reader)),
@@ -160,7 +164,6 @@ impl DataSource {
 
                 #[cfg(feature = "zip")]
                 if is_zip_archive(path) {
-                    use crate::archive::ZipArchive;
                     let mut archive = ZipArchive::open(archive_path)?;
                     return match archive.find_entry(entry_path)? {
                         Some((entry_reader, _metadata)) => Ok(Box::new(entry_reader)),
@@ -200,7 +203,7 @@ impl DataSource {
     /// # Errors
     ///
     /// Returns an error if checking existence fails (e.g., archive corruption)
-    pub fn exists(&self) -> Result<bool, CheckleError> {
+    pub fn exists(&self) -> Result<bool> {
         match self {
             Self::Filesystem { path } => Ok(path.exists()),
             Self::Archive {
@@ -215,14 +218,12 @@ impl DataSource {
 
                 #[cfg(feature = "tar")]
                 if is_tar_archive(path) {
-                    use crate::archive::TarArchive;
                     let mut archive = TarArchive::open(archive_path)?;
                     return Ok(archive.find_entry(entry_path)?.is_some());
                 }
 
                 #[cfg(feature = "zip")]
                 if is_zip_archive(path) {
-                    use crate::archive::ZipArchive;
                     let mut archive = ZipArchive::open(archive_path)?;
                     return Ok(archive.find_entry(entry_path)?.is_some());
                 }
@@ -257,7 +258,7 @@ impl DataSource {
     /// # Errors
     ///
     /// Returns an error if metadata cannot be accessed
-    pub fn file_size(&self) -> Result<Option<u64>, CheckleError> {
+    pub fn file_size(&self) -> Result<Option<u64>> {
         match self {
             Self::Filesystem { path } => {
                 let metadata =
@@ -275,7 +276,6 @@ impl DataSource {
 
                 #[cfg(feature = "tar")]
                 if is_tar_archive(path) {
-                    use crate::archive::TarArchive;
                     let mut archive = TarArchive::open(archive_path)?;
                     return match archive.find_entry(entry_path)? {
                         Some((_entry, metadata)) => Ok(Some(metadata.size)),
@@ -285,7 +285,6 @@ impl DataSource {
 
                 #[cfg(feature = "zip")]
                 if is_zip_archive(path) {
-                    use crate::archive::ZipArchive;
                     let mut archive = ZipArchive::open(archive_path)?;
                     return match archive.find_entry(entry_path)? {
                         Some((_entry, metadata)) => Ok(Some(metadata.size)),
@@ -295,6 +294,217 @@ impl DataSource {
 
                 Ok(None)
             }
+        }
+    }
+
+    /// Hash this data source using the specified algorithm.
+    ///
+    /// This method provides optimized hashing for both filesystem and archive sources.
+    /// For filesystem sources, it uses the optimized parallel Hasher when applicable.
+    /// For archive sources, it performs sequential hashing.
+    ///
+    /// # Arguments
+    ///
+    /// * `algo` - The hashing algorithm to use
+    /// * `chunk_size_kb` - Chunk size in KB (0 for default)
+    /// * `parallel_readers` - Number of parallel readers (filesystem only)
+    /// * `progress_callback` - Optional progress callback
+    ///
+    /// # Returns
+    ///
+    /// The computed hash as a hexadecimal string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The source cannot be opened
+    /// - Reading fails
+    /// - Hash computation fails
+    pub fn hash<F>(
+        &self,
+        algo: HashingAlgo,
+        chunk_size_kb: u16,
+        parallel_readers: usize,
+        progress_callback: Option<F>,
+    ) -> Result<String>
+    where
+        F: Fn(u64) + Send + Sync + 'static,
+    {
+        match self {
+            Self::Filesystem { path } => {
+                // For filesystem sources, use the existing optimized Hasher
+                hash_filesystem_source(
+                    path.as_path(),
+                    algo,
+                    chunk_size_kb,
+                    parallel_readers,
+                    progress_callback,
+                )
+            }
+            Self::Archive { .. } => {
+                // For archive sources, use sequential hashing
+                hash_archive_source(self, algo, chunk_size_kb, progress_callback)
+            }
+        }
+    }
+
+    /// Verify this data source against an expected hash.
+    ///
+    /// # Arguments
+    ///
+    /// * `expected_hash` - The expected hash value
+    /// * `algo` - The hashing algorithm to use
+    /// * `chunk_size_kb` - Chunk size in KB (0 for default)
+    /// * `parallel_readers` - Number of parallel readers (filesystem only)
+    ///
+    /// # Returns
+    ///
+    /// Ok(()) if the hash matches, error otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The source cannot be read
+    /// - Hash computation fails
+    /// - The computed hash doesn't match the expected hash
+    pub fn verify(
+        &self,
+        expected_hash: &str,
+        algo: HashingAlgo,
+        chunk_size_kb: u16,
+        parallel_readers: usize,
+    ) -> Result<()> {
+        let computed_hash = self.hash(algo, chunk_size_kb, parallel_readers, None::<fn(u64)>)?;
+
+        if computed_hash == expected_hash {
+            Ok(())
+        } else {
+            Err(CheckleError::FailedChecksum(PathBuf::from(
+                self.display_path(),
+            )))
+        }
+    }
+}
+
+/// Hash a filesystem source using the existing Hasher.
+fn hash_filesystem_source<F>(
+    path: &Path,
+    algo: HashingAlgo,
+    chunk_size_kb: u16,
+    parallel_readers: usize,
+    progress_callback: Option<F>,
+) -> Result<String>
+where
+    F: Fn(u64) + Send + Sync + 'static,
+{
+    let hasher = match algo {
+        HashingAlgo::Md5 => {
+            let mut h = Hasher::new_md5(path);
+            if chunk_size_kb > 0 {
+                h = h.with_chunk_size((chunk_size_kb as usize) * 1024)?;
+            }
+            if parallel_readers > 0 {
+                h = h.with_parallel_readers(parallel_readers);
+            }
+            if let Some(callback) = progress_callback {
+                h = h.with_progress_callback(callback);
+            }
+            h.find_root_hash()
+        }
+        HashingAlgo::Sha2 => {
+            let mut h = Hasher::new_sha2(path);
+            if chunk_size_kb > 0 {
+                h = h.with_chunk_size((chunk_size_kb as usize) * 1024)?;
+            }
+            if parallel_readers > 0 {
+                h = h.with_parallel_readers(parallel_readers);
+            }
+            if let Some(callback) = progress_callback {
+                h = h.with_progress_callback(callback);
+            }
+            h.find_root_hash()
+        }
+    }?;
+
+    Ok(hasher)
+}
+
+/// Hash an archive source by extracting and hashing sequentially.
+#[allow(clippy::needless_pass_by_value)]
+fn hash_archive_source<F>(
+    source: &DataSource,
+    algo: HashingAlgo,
+    chunk_size_kb: u16,
+    progress_callback: Option<F>,
+) -> Result<String>
+where
+    F: Fn(u64) + Send + Sync + 'static,
+{
+    use md5::{Digest as Md5Digest, Md5};
+    use sha2::{Digest, Sha256};
+
+    let mut reader = source.open_reader()?;
+    let chunk_size = if chunk_size_kb > 0 {
+        (chunk_size_kb as usize) * 1024
+    } else {
+        crate::constants::DEFAULT_CHUNK_SIZE
+    };
+
+    let mut buffer = vec![0u8; chunk_size];
+    let mut total_read = 0u64;
+
+    match algo {
+        HashingAlgo::Md5 => {
+            let mut hasher = Md5::new();
+
+            loop {
+                let bytes_read =
+                    reader
+                        .read(&mut buffer)
+                        .map_err(|e| CheckleError::FileReadError {
+                            path: PathBuf::from(source.display_path()),
+                            source: e,
+                        })?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                Digest::update(&mut hasher, &buffer[..bytes_read]);
+                total_read += bytes_read as u64;
+
+                if let Some(ref callback) = progress_callback {
+                    callback(total_read);
+                }
+            }
+
+            Ok(format!("{:x}", hasher.finalize()))
+        }
+        HashingAlgo::Sha2 => {
+            let mut hasher = Sha256::new();
+
+            loop {
+                let bytes_read =
+                    reader
+                        .read(&mut buffer)
+                        .map_err(|e| CheckleError::FileReadError {
+                            path: PathBuf::from(source.display_path()),
+                            source: e,
+                        })?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                Digest::update(&mut hasher, &buffer[..bytes_read]);
+                total_read += bytes_read as u64;
+
+                if let Some(ref callback) = progress_callback {
+                    callback(total_read);
+                }
+            }
+
+            Ok(format!("{:x}", hasher.finalize()))
         }
     }
 }
@@ -404,5 +614,79 @@ mod tests {
         std::fs::remove_file(&file_path).unwrap();
         let source_nonexistent = DataSource::Filesystem { path: file_path };
         assert!(!source_nonexistent.exists().unwrap());
+    }
+
+    #[test]
+    fn test_hash_filesystem_source() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, b"Hello, world!").unwrap();
+
+        let source = DataSource::from_path(file_path);
+        let hash = source
+            .hash(HashingAlgo::Md5, 0, 0, None::<fn(u64)>)
+            .unwrap();
+
+        // Known MD5 of "Hello, world!"
+        assert_eq!(hash, "6cd3556deb0da54bca060b4c39479839");
+    }
+
+    #[test]
+    fn test_hash_with_progress() {
+        use std::sync::{Arc, Mutex};
+
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        let content = vec![0u8; 10_000]; // 10KB
+        std::fs::write(&file_path, &content).unwrap();
+
+        let source = DataSource::from_path(file_path);
+        let progress_called = Arc::new(Mutex::new(false));
+        let progress_called_clone = Arc::clone(&progress_called);
+
+        let callback = move |_bytes: u64| {
+            if let Ok(mut called) = progress_called_clone.lock() {
+                *called = true;
+            }
+        };
+
+        let _hash = source
+            .hash(HashingAlgo::Sha2, 4, 0, Some(callback))
+            .unwrap();
+
+        if let Ok(called) = progress_called.lock() {
+            assert!(*called, "Progress callback should be called");
+        }
+    }
+
+    #[test]
+    fn test_verify_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, b"test data").unwrap();
+
+        let source = DataSource::from_path(file_path);
+
+        // First compute the hash
+        let hash = source
+            .hash(HashingAlgo::Md5, 0, 0, None::<fn(u64)>)
+            .unwrap();
+
+        // Then verify it
+        let result = source.verify(&hash, HashingAlgo::Md5, 0, 0);
+        assert!(result.is_ok(), "Verification should succeed");
+    }
+
+    #[test]
+    fn test_verify_failure() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("test.txt");
+        std::fs::write(&file_path, b"test data").unwrap();
+
+        let source = DataSource::from_path(file_path);
+
+        // Try to verify with wrong hash
+        let result = source.verify("wronghash", HashingAlgo::Md5, 0, 0);
+        assert!(result.is_err(), "Verification should fail");
     }
 }

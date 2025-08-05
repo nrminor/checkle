@@ -1,6 +1,7 @@
 # checkle: Extremely fast checksum runner for arbitrarily large batches of large files
 
-[![CI](https://github.com/nrminor/checkle/workflows/CI/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/ci.yml)
+[![CI (Stable)](https://github.com/nrminor/checkle/workflows/CI%20(Stable)/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/ci-stable.yml)
+[![CI (SIMD Nightly)](https://github.com/nrminor/checkle/workflows/CI%20(SIMD%20Nightly)/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/ci-simd.yml)
 [![Security Audit](https://github.com/nrminor/checkle/workflows/Security%20Audit/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/audit.yml)
 [![Release](https://github.com/nrminor/checkle/workflows/Release/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/release.yml)
 [![Documentation](https://img.shields.io/badge/docs-mdbook-blue)](https://nrminor.github.io/checkle/)
@@ -11,17 +12,17 @@ chuckle.
 ### Overview
 
 I work in genomics. This means I often transfer batches of data files from
-sequencing cores, where each file can be as much as a half-a-terabyte. As such,
-checking the integrity of these files post-transfer can be an arduous,
-time-consuming task. To run checksums, it's not unusual to stay in one's
-scripting comfort zone, write a shell or Python for loop, and run `md5sum` or
-some other single-threaded utility on a file in each iteration, waiting however
-long it takes for the serial integrity checks to finish. This process can be
-agonizingly slow, and without good reason: modern CPUs come with the ability to
-spread computations across cores and use "wide" SIMD operations on each.
-Traditional checksum utilities also leave some additional optimizations made
-possible by SSD storage on the table. We can do better and get to the fun
-part--analyzing data and doing science--faster.
+sequencing cores, where each file can be as much as a half-a-terabyte. Checking
+the integrity of these files post-transfer can be an arduous, time-consuming
+task. To run checksums, it's not unusual to stay in one's scripting comfort
+zone, write a shell or Python for loop, and run `md5sum` or some other
+single-threaded utility on a file in each iteration, waiting however long it
+takes for the serial integrity checks to finish. This process can be agonizingly
+slow, and without good reason: modern CPUs come with the ability to spread
+computations across cores and use "wide" SIMD operations on each. Traditional
+checksum utilities also leave some additional optimizations made possible by SSD
+storage on the table. We can do better and get to the fun part--analyzing data
+and doing science--faster.
 
 `checkle` aims to make slow, serial checksums obsolete and bring file integrity
 checks into the multicore era. It performs checksums on batches of files using
@@ -52,6 +53,43 @@ directory traversal, multiple report formats, sophisticated logging, and more.
 - A (planned) deterministic simulation testing engine to guarantee robustness
 
 ### Installation
+
+#### Quick Install (Recommended)
+
+```bash
+# Standard build
+curl -fsSL https://raw.githubusercontent.com/nrminor/checkle/main/INSTALL.sh | sh
+
+# SIMD-optimized build (faster, requires modern CPU)
+curl -fsSL https://raw.githubusercontent.com/nrminor/checkle/main/INSTALL.sh | sh -s -- --simd
+```
+
+#### Manual Binary Download
+
+Download from [releases](https://github.com/nrminor/checkle/releases):
+
+```bash
+# SIMD-optimized (recommended for modern CPUs)
+wget https://github.com/nrminor/checkle/releases/latest/download/checkle-x86_64-unknown-linux-gnu-simd.tar.gz
+tar -xzf checkle-x86_64-unknown-linux-gnu-simd.tar.gz
+sudo mv checkle /usr/local/bin/
+
+# Standard compatibility version
+wget https://github.com/nrminor/checkle/releases/latest/download/checkle-x86_64-unknown-linux-gnu.tar.gz
+```
+
+#### Cargo Install
+
+```bash
+# From crates.io (when published)
+cargo install checkle
+
+# With cargo-binstall (if available)
+cargo binstall checkle
+
+# From source
+cargo install --git https://github.com/nrminor/checkle
+```
 
 ### Basic Usage
 
@@ -221,6 +259,28 @@ just release
 just install
 ```
 
+### Building with SIMD Optimizations
+
+checkle includes optional SIMD optimizations for improved performance. These
+require Rust nightly:
+
+```bash
+# Install nightly toolchain if needed
+rustup toolchain install nightly
+
+# Build with SIMD optimizations
+cargo +nightly build --release --features simd
+
+# Build with native CPU optimizations for maximum performance
+RUSTFLAGS="-C target-cpu=native" cargo +nightly build --release --features simd
+
+# Run SIMD tests
+just test-simd
+
+# Run SIMD benchmarks
+just bench-simd
+```
+
 ### Testing Requirements
 
 Before submitting any changes:
@@ -231,3 +291,8 @@ Before submitting any changes:
 4. Clippy must report zero warnings: `just clippy`
 
 The project enforces strict quality standards with comprehensive linting rules.
+
+### Rust Version Requirements
+
+- **Minimum supported Rust version**: 1.88.0
+- **For SIMD features**: Rust nightly (for `portable_simd`)

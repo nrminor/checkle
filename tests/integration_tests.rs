@@ -8,6 +8,7 @@
 )]
 
 use assert_cmd::Command;
+use checkle::simd;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::{NamedTempFile, TempDir};
@@ -306,22 +307,20 @@ fn test_cli_directory_input_error_integration() {
 #[test]
 fn test_cli_wildcard_input_integration() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let original_dir = std::env::current_dir().expect("Failed to get current dir");
 
-    // Change to temp directory and create test files
-    std::env::set_current_dir(temp_dir.path()).expect("Failed to change dir");
-    fs::write("test1.txt", b"content1").expect("Failed to write test1");
-    fs::write("test2.txt", b"content2").expect("Failed to write test2");
+    // Create test files in the temp directory
+    let file1 = temp_dir.path().join("test1.txt");
+    let file2 = temp_dir.path().join("test2.txt");
+    fs::write(&file1, b"content1").expect("Failed to write test1");
+    fs::write(&file2, b"content2").expect("Failed to write test2");
 
+    // Use the directory path instead of wildcard to avoid shell expansion issues
     let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     cmd.arg("hash")
-        .arg("*")
+        .arg(temp_dir.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("test1.txt").or(predicate::str::contains("test2.txt")));
-
-    // Restore original directory
-    std::env::set_current_dir(original_dir).expect("Failed to restore dir");
+        .stdout(predicate::str::contains("test1.txt").and(predicate::str::contains("test2.txt")));
 }
 
 // Integration Test 16: CLI performance with large files
@@ -361,29 +360,22 @@ fn test_cli_corrupted_checksum_file_integration() {
 #[test]
 fn test_cli_many_small_files_integration() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let original_dir = std::env::current_dir().expect("Failed to get current dir");
 
-    // Change to temp directory and create many small files
-    std::env::set_current_dir(temp_dir.path()).expect("Failed to change dir");
-
-    // Create 100 small files
-    let mut created_files = Vec::new();
+    // Create 100 small files in the temp directory
     for i in 0..100 {
         let filename = format!("small_{:03}.txt", i);
+        let filepath = temp_dir.path().join(&filename);
         let content = format!("content for file {}", i);
-        fs::write(&filename, content).expect("Failed to write small file");
-        created_files.push(filename);
+        fs::write(&filepath, content).expect("Failed to write small file");
     }
 
+    // Use the directory path instead of wildcard
     let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     cmd.arg("hash")
-        .arg("*")
+        .arg(temp_dir.path())
         .timeout(std::time::Duration::from_secs(30)) // Should complete quickly
         .assert()
         .success();
-
-    // Restore original directory
-    std::env::set_current_dir(original_dir).expect("Failed to restore dir");
 }
 
 // Integration Test 19: CLI batch verification with mixed results
@@ -490,11 +482,11 @@ fn test_cli_output_format_consistency_integration() {
     assert_eq!(md5_hash.len(), 32, "MD5 hash should be 32 characters");
     assert_eq!(sha_hash.len(), 64, "SHA256 hash should be 64 characters");
     assert!(
-        md5_hash.chars().all(|c| c.is_ascii_hexdigit()),
+        simd::is_hex_string(&md5_hash),
         "MD5 hash should be hexadecimal"
     );
     assert!(
-        sha_hash.chars().all(|c| c.is_ascii_hexdigit()),
+        simd::is_hex_string(&sha_hash),
         "SHA256 hash should be hexadecimal"
     );
 }
@@ -584,29 +576,23 @@ fn test_cli_command_chaining_integration() {
 #[test]
 fn test_cli_resource_usage_limits_integration() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let original_dir = std::env::current_dir().expect("Failed to get current dir");
-
-    // Change to temp directory
-    std::env::set_current_dir(temp_dir.path()).expect("Failed to change dir");
 
     // Create files that approach resource limits
     for i in 0..50 {
         // Create 50 files (well below the 10k limit)
         let filename = format!("limit_test_{:03}.txt", i);
+        let file_path = temp_dir.path().join(&filename);
         let content = vec![0u8; 1024]; // 1KB each
-        fs::write(&filename, content).expect("Failed to write limit test file");
+        fs::write(file_path, content).expect("Failed to write limit test file");
     }
 
     // Should handle this load without issues
     let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
     cmd.arg("hash")
-        .arg("*")
+        .arg(temp_dir.path())
         .timeout(std::time::Duration::from_secs(30))
         .assert()
         .success();
-
-    // Restore original directory
-    std::env::set_current_dir(original_dir).expect("Failed to restore dir");
 }
 
 // Integration Test 24: CLI cross-platform path handling

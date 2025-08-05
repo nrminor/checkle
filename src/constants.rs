@@ -181,7 +181,7 @@ const _: () = assert!(
     "CHUNK_SIZE must be <= MAX_CHUNK_SIZE"
 );
 const _: () = assert!(
-    CHUNK_SIZE % 512 == 0,
+    CHUNK_SIZE.is_multiple_of(512),
     "CHUNK_SIZE should be a multiple of 512 for disk alignment"
 );
 
@@ -214,7 +214,7 @@ const _: () = assert!(
     "MIN_CHUNK_SIZE should be at least 1KB"
 );
 const _: () = assert!(
-    MIN_CHUNK_SIZE % 512 == 0,
+    MIN_CHUNK_SIZE.is_multiple_of(512),
     "MIN_CHUNK_SIZE should be a multiple of 512"
 );
 
@@ -228,7 +228,7 @@ const _: () = assert!(
     "MAX_CHUNK_SIZE should be <= 1GB"
 );
 const _: () = assert!(
-    MAX_CHUNK_SIZE % PAGE_SIZE == 0,
+    MAX_CHUNK_SIZE.is_multiple_of(PAGE_SIZE),
     "MAX_CHUNK_SIZE should be page-aligned"
 );
 
@@ -300,7 +300,7 @@ const _: () = assert!(
     "MAX_BUFFER_SIZE must be >= CHUNK_SIZE"
 );
 const _: () = assert!(
-    MAX_BUFFER_SIZE % PAGE_SIZE == 0,
+    MAX_BUFFER_SIZE.is_multiple_of(PAGE_SIZE),
     "MAX_BUFFER_SIZE should be page-aligned"
 );
 

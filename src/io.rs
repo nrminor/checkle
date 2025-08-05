@@ -1,3 +1,11 @@
+use crate::{
+    archive::ArchiveReader,
+    archive_path::{ArchivePathComponents, parse_archive_path},
+    cli::Recursive,
+    constants::{MAX_CHECKSUM_FILE_LINES, MAX_FILES_IN_BATCH, MAX_RECURSION_DEPTH},
+    prelude::CheckleError,
+    simd,
+};
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use log::{debug, warn};
 use std::{
@@ -5,14 +13,6 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
-};
-
-use crate::{
-    archive::ArchiveReader,
-    archive_path::{ArchivePathComponents, parse_archive_path},
-    cli::Recursive,
-    constants::{MAX_CHECKSUM_FILE_LINES, MAX_FILES_IN_BATCH, MAX_RECURSION_DEPTH},
-    prelude::CheckleError,
 };
 
 /// Configuration for file filtering using include/exclude patterns.
@@ -186,21 +186,14 @@ impl FilesToCheck {
 
     /// Creates a `FilesToCheck` collection from a vector of file-hash pairs.
     ///
+    /// Note: This method is primarily used for testing. The batch size limit
+    /// should be enforced at the command level where it can be configured by users.
+    ///
     /// # Panics
     ///
-    /// Panics if:
-    /// - The number of pairs exceeds `MAX_FILES_IN_BATCH` (10,000)
-    /// - The postcondition check fails (length doesn't match input)
+    /// Panics if the postcondition check fails (length doesn't match input)
     #[must_use]
     pub fn from_vec(pairs: Vec<FileHashPair>) -> Self {
-        // Precondition assertions
-        assert!(
-            pairs.len() <= MAX_FILES_IN_BATCH,
-            "File batch size exceeds maximum: {} > {}",
-            pairs.len(),
-            MAX_FILES_IN_BATCH
-        );
-
         let pairs_len = pairs.len();
         let files_to_check = Self(pairs);
 
@@ -210,40 +203,40 @@ impl FilesToCheck {
         files_to_check
     }
 
+    /// Returns the number of file-hash pairs in the collection.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns true if the collection is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Converts the collection into a vector of file-hash pairs.
     ///
-    /// # Panics
-    ///
-    /// Panics if the resulting vector size exceeds `MAX_FILES_IN_BATCH` (10,000).
+    /// Note: The batch size limit is enforced at creation time and by the caller,
+    /// not when converting to a vector. This allows users to configure custom
+    /// batch size limits via command-line arguments.
     #[must_use]
     pub fn to_vec(self) -> Vec<FileHashPair> {
-        let vec = self.0;
-
-        // Postcondition assertion
-        assert!(
-            vec.len() <= MAX_FILES_IN_BATCH,
-            "Vector size must not exceed maximum batch size: {} > {}",
-            vec.len(),
-            MAX_FILES_IN_BATCH
-        );
-
-        vec
+        self.0
     }
 
     /// Adds a file-hash pair to the collection.
     ///
+    /// Note: The batch size limit should be enforced by the caller.
+    /// This method only checks that the file exists.
+    ///
     /// # Panics
     ///
     /// Panics if:
-    /// - Adding the item would exceed `MAX_FILES_IN_BATCH` (10,000)
     /// - The file in the pair doesn't exist
     /// - The postcondition check fails (length doesn't increase by 1)
     pub fn push(&mut self, item: FileHashPair) {
         // Precondition assertions
-        assert!(
-            self.0.len() < MAX_FILES_IN_BATCH,
-            "Cannot push: would exceed maximum batch size"
-        );
         assert!(
             item.file().exists(),
             "File must exist: {}",
@@ -286,7 +279,7 @@ impl FileHashPair {
         assert!(file.exists(), "File must exist: {}", file.display());
         assert!(!hash.is_empty(), "Hash must not be empty");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            simd::is_hex_string(&hash),
             "Hash must contain only hexadecimal characters"
         );
 
@@ -315,7 +308,7 @@ impl FileHashPair {
         // Precondition assertions (Tiger Style: minimum 2 per function)
         assert!(!hash.is_empty(), "Hash must not be empty");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            simd::is_hex_string(&hash),
             "Hash must contain only hexadecimal characters"
         );
 
@@ -351,7 +344,7 @@ impl FileHashPair {
         // Postcondition assertions
         assert!(!hash.is_empty(), "Hash must not be empty");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            simd::is_hex_string(hash),
             "Hash must contain only hexadecimal characters"
         );
 
@@ -413,6 +406,11 @@ impl FilesToCheck {
         };
         let buffer = BufReader::new(file_handle);
 
+        // Get the canonical path of the checksum file for comparison
+        let checksum_file_canonical = checksum_file
+            .canonicalize()
+            .unwrap_or_else(|_| checksum_file.to_path_buf());
+
         let mut files_to_check = FilesToCheck::new();
         let mut line_count = 0;
 
@@ -447,6 +445,18 @@ impl FilesToCheck {
                 ));
             }
             let file_path = PathBuf::from(file_str);
+
+            // Skip if this file is the checksum file itself
+            // Try to canonicalize the file path for comparison, but if it fails (file doesn't exist yet),
+            // just compare the paths as-is
+            let file_canonical = file_path
+                .canonicalize()
+                .unwrap_or_else(|_| file_path.clone());
+            if file_canonical == checksum_file_canonical {
+                debug!("Skipping checksum file itself: {file_str}");
+                continue;
+            }
+
             if !file_path.exists() {
                 warn!(
                     "A file listed in the checksum file, {file_str}, does not exist and will be skipped"
@@ -458,14 +468,6 @@ impl FilesToCheck {
 
             files_to_check.push(wrapper);
         }
-
-        // Postcondition assertions
-        // Note: It's valid to have lines that don't result in files being added
-        // (e.g., when files don't exist and we log warnings)
-        assert!(
-            files_to_check.0.len() <= MAX_FILES_IN_BATCH,
-            "Result must not exceed maximum batch size"
-        );
 
         Ok(files_to_check)
     }
@@ -569,16 +571,6 @@ impl FilesToCheck {
             };
             files_to_check.push(wrapper);
         }
-
-        // Postcondition assertions (Tiger Style: minimum 2 per function)
-        assert!(
-            files_to_check.0.len() <= MAX_FILES_IN_BATCH,
-            "Result must not exceed maximum batch size"
-        );
-        assert!(
-            line_count <= MAX_CHECKSUM_FILE_LINES,
-            "Line count must not exceed maximum"
-        );
 
         Ok(files_to_check)
     }
@@ -978,18 +970,18 @@ fn collect_files_recursive(
             source: std::io::Error::other(e),
         })?;
 
-        if entry.file_type().is_some_and(|ft| ft.is_file()) {
-            if let Some(path) = entry.path().to_owned().into() {
-                file_paths.push(path);
+        if entry.file_type().is_some_and(|ft| ft.is_file())
+            && let Some(path) = entry.path().to_owned().into()
+        {
+            file_paths.push(path);
 
-                // Check batch size limit during collection
-                if file_paths.len() > filter_config.max_files_batch {
-                    warn!(
-                        "File collection stopped: exceeded maximum batch size of {} files",
-                        filter_config.max_files_batch
-                    );
-                    break;
-                }
+            // Check batch size limit during collection
+            if file_paths.len() > filter_config.max_files_batch {
+                warn!(
+                    "File collection stopped: exceeded maximum batch size of {} files",
+                    filter_config.max_files_batch
+                );
+                break;
             }
         }
     }
@@ -1540,7 +1532,7 @@ mod tests {
         #[test]
         fn test_file_hash_pair_with_valid_hex_hashes(hash_bytes in prop::collection::vec(any::<u8>(), 16..32)) {
             let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-            let hex_hash = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let hex_hash = crate::simd::bytes_to_hex(&hash_bytes);
 
             let pair = FileHashPair::new(temp_file.path().to_path_buf(), hex_hash.clone());
             prop_assert_eq!(pair.hash(), &hex_hash);
@@ -2181,11 +2173,141 @@ mod tests {
             hash_bytes in prop::collection::vec(any::<u8>(), 16..32)
         ) {
             let file_path = PathBuf::from(file_name);
-            let hex_hash = hash_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let hex_hash = crate::simd::bytes_to_hex(&hash_bytes);
 
             let pair = FileHashPair::new_unchecked(file_path.clone(), hex_hash.clone());
             prop_assert_eq!(pair.file(), file_path.as_path());
             prop_assert_eq!(pair.hash(), &hex_hash);
         }
+    }
+
+    // Test that checksum file itself is excluded from verification
+    #[test]
+    fn test_checksum_file_excludes_itself() {
+        // Create test files
+        let temp_file1 = NamedTempFile::new().expect("Failed to create temp file");
+        let temp_file2 = NamedTempFile::new().expect("Failed to create temp file");
+        let checksum_file = NamedTempFile::new().expect("Failed to create checksum file");
+
+        // Create checksum content that includes the checksum file itself
+        let checksum_content = format!(
+            "d41d8cd98f00b204e9800998ecf8427e\t{}\na1b2c3d4e5f67890abcdef1234567890\t{}\nabcdefabcdefabcdefabcdefabcdefab\t{}",
+            temp_file1.path().display(),
+            temp_file2.path().display(),
+            checksum_file.path().display() // Include the checksum file itself
+        );
+        fs::write(checksum_file.path(), checksum_content).expect("Failed to write checksum file");
+
+        let result = FilesToCheck::new_from_txt(checksum_file.path());
+        assert!(result.is_ok(), "Parsing checksum file should succeed");
+
+        let files_to_check = result.unwrap();
+        let vec = files_to_check.to_vec();
+
+        // Should only contain 2 files, not 3 (checksum file should be excluded)
+        assert_eq!(
+            vec.len(),
+            2,
+            "Checksum file should be excluded from the list"
+        );
+
+        // Verify that the checksum file is not in the list
+        let file_paths: Vec<_> = vec.iter().map(super::FileHashPair::file).collect();
+        assert!(
+            !file_paths.contains(&checksum_file.path()),
+            "Checksum file should not be in the list"
+        );
+
+        // Verify that the other files are in the list
+        assert!(
+            file_paths.contains(&temp_file1.path()),
+            "temp_file1 should be in the list"
+        );
+        assert!(
+            file_paths.contains(&temp_file2.path()),
+            "temp_file2 should be in the list"
+        );
+    }
+
+    // Test checksum file exclusion with relative paths
+    #[test]
+    fn test_checksum_file_excludes_itself_relative_paths() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let original_dir = std::env::current_dir().expect("Failed to get current dir");
+        std::env::set_current_dir(temp_dir.path()).expect("Failed to change dir");
+
+        // Create test files in current directory
+        let temp_file1 = NamedTempFile::new_in(".").expect("Failed to create temp file");
+        let checksum_file = NamedTempFile::new_in(".").expect("Failed to create checksum file");
+
+        // Get just the file names (relative paths)
+        let file1_name = temp_file1.path().file_name().unwrap().to_str().unwrap();
+        let checksum_file_name = checksum_file.path().file_name().unwrap().to_str().unwrap();
+
+        // Create checksum content with relative paths
+        let checksum_content = format!(
+            "d41d8cd98f00b204e9800998ecf8427e\t{}\nabcdefabcdefabcdefabcdefabcdefab\t{}",
+            file1_name,
+            checksum_file_name // Include the checksum file itself with relative path
+        );
+        fs::write(&checksum_file, checksum_content).expect("Failed to write checksum file");
+
+        let result = FilesToCheck::new_from_txt(checksum_file.path());
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).expect("Failed to restore dir");
+
+        assert!(result.is_ok(), "Parsing checksum file should succeed");
+
+        let files_to_check = result.unwrap();
+        let vec = files_to_check.to_vec();
+
+        // Should only contain 1 file (checksum file should be excluded even with relative paths)
+        assert_eq!(
+            vec.len(),
+            1,
+            "Checksum file should be excluded even with relative paths"
+        );
+    }
+
+    // Test checksum file exclusion with symbolic links
+    #[test]
+    #[cfg(unix)] // Symlinks are primarily a Unix concept
+    fn test_checksum_file_excludes_itself_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let temp_file = NamedTempFile::new_in(&temp_dir).expect("Failed to create temp file");
+        let checksum_file =
+            NamedTempFile::new_in(&temp_dir).expect("Failed to create checksum file");
+
+        // Create a symlink to the checksum file
+        let symlink_path = temp_dir.path().join("checksum_link.txt");
+        symlink(checksum_file.path(), &symlink_path).expect("Failed to create symlink");
+
+        // Create checksum content that includes both the real file and the symlink
+        let checksum_content = format!(
+            "d41d8cd98f00b204e9800998ecf8427e\t{}\nabcdefabcdefabcdefabcdefabcdefab\t{}",
+            temp_file.path().display(),
+            symlink_path.display() // Include the symlink to checksum file
+        );
+        fs::write(checksum_file.path(), checksum_content).expect("Failed to write checksum file");
+
+        let result = FilesToCheck::new_from_txt(&symlink_path); // Use symlink as the checksum file
+        assert!(
+            result.is_ok(),
+            "Parsing checksum file through symlink should succeed"
+        );
+
+        let files_to_check = result.unwrap();
+        let vec = files_to_check.to_vec();
+
+        // Should only contain 1 file (symlink to checksum file should be excluded)
+        assert_eq!(vec.len(), 1, "Symlink to checksum file should be excluded");
+        assert_eq!(
+            vec[0].file(),
+            temp_file.path(),
+            "Only temp_file should remain"
+        );
     }
 }

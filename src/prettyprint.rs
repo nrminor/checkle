@@ -26,6 +26,7 @@ use crate::{
         MIN_TRUNCATE_LENGTH, PATH_TRUNCATE_CHARS, THRESHOLD, UNITS, VALID_PERMISSION_MASK,
     },
     errors::{CheckleError, EmptyHash, InvalidHashFormat, StderrWriteError},
+    simd,
 };
 
 /// Trait for types that can be displayed as rows in a pretty table.
@@ -161,7 +162,7 @@ impl VerificationResult {
         if expected_hash.is_empty() {
             return Err(EmptyHash);
         }
-        if !expected_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !simd::is_hex_string(&expected_hash) {
             return Err(InvalidHashFormat {
                 hash: expected_hash,
             });
@@ -171,7 +172,7 @@ impl VerificationResult {
         if actual_hash.is_empty() {
             return Err(EmptyHash);
         }
-        if !actual_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !simd::is_hex_string(&actual_hash) {
             return Err(InvalidHashFormat { hash: actual_hash });
         }
 
@@ -491,7 +492,7 @@ impl FileHashPairWithMetadata {
         if hash.is_empty() {
             return Err(EmptyHash);
         }
-        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !simd::is_hex_string(&hash) {
             return Err(InvalidHashFormat { hash });
         }
 
@@ -557,7 +558,7 @@ impl FileHashPairWithMetadata {
         if hash.is_empty() {
             return Err(EmptyHash);
         }
-        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !simd::is_hex_string(&hash) {
             return Err(InvalidHashFormat { hash });
         }
 
