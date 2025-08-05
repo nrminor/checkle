@@ -2482,10 +2482,19 @@ mod tests {
 
     #[test]
     fn test_format_path_absolute_mode() {
-        // Test with already absolute path
-        let abs_path = Path::new("/home/user/file.txt");
-        let result = format_path_for_display(abs_path, PathDisplayMode::Absolute);
-        assert_eq!(result, "/home/user/file.txt");
+        // Test with already absolute path - use platform-specific paths
+        #[cfg(unix)]
+        {
+            let abs_path = Path::new("/home/user/file.txt");
+            let result = format_path_for_display(abs_path, PathDisplayMode::Absolute);
+            assert_eq!(result, "/home/user/file.txt");
+        }
+        #[cfg(windows)]
+        {
+            let abs_path = Path::new("C:\\Users\\user\\file.txt");
+            let result = format_path_for_display(abs_path, PathDisplayMode::Absolute);
+            assert_eq!(result, "C:\\Users\\user\\file.txt");
+        }
 
         // Test with relative path (will be made absolute)
         let rel_path = Path::new("Cargo.toml");
