@@ -13,7 +13,6 @@ on:
       - 'justfile'
       - '.github/workflows/ci-stable.yml'
   pull_request:
-  workflow_call:
     branches: [ main ]
     paths:
       - 'src/**'
@@ -24,6 +23,7 @@ on:
       - 'Cargo.lock'
       - 'justfile'
       - '.github/workflows/ci-stable.yml'
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
