@@ -7,7 +7,27 @@ use clap_complete::generate;
 use color_eyre::Result;
 use std::io::stdout;
 
+#[cfg(not(target_os = "windows"))]
 fn main() -> Result<()> {
+    run_main()
+}
+
+#[cfg(target_os = "windows")]
+fn main() -> Result<()> {
+    // On Windows, ensure we have adequate stack size (8MB) to prevent stack overflow
+    // This is especially important for recursive operations and the preflight checks
+    const STACK_SIZE: usize = 8 * 1024 * 1024; // 8MB
+
+    // Build and run the main thread with explicit stack size
+    let builder = std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(STACK_SIZE);
+
+    let handle = builder.spawn(run_main).unwrap();
+    handle.join().unwrap()
+}
+
+fn run_main() -> Result<()> {
     // Parse provided command line arguments
     let cli = Cli::parse();
 
@@ -341,21 +361,24 @@ mod preflight {
 
     #[cfg(target_os = "windows")]
     fn check_windows_storage_type() -> bool {
-        let script = "Get-PhysicalDisk | Where-Object {$_.MediaType -eq 'SSD'} | Measure-Object | Select-Object -ExpandProperty Count";
-
+        // Use a simpler PowerShell command to reduce complexity and potential stack usage
         let output = std::process::Command::new("powershell")
-            .args(&["-Command", script])
+            .args(&[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-PhysicalDisk | Where MediaType -eq 'SSD').Count -gt 0",
+            ])
             .output()
             .ok();
 
         if let Some(output) = output {
             let output_str = String::from_utf8_lossy(&output.stdout);
-            if let Ok(count) = output_str.trim().parse::<u32>() {
-                return count > 0;
-            }
+            matches!(output_str.trim(), "True" | "true")
+        } else {
+            // If PowerShell fails, assume not SSD to avoid crashes
+            false
         }
-
-        false
     }
 
     fn check_temp_directory() {

@@ -10,6 +10,7 @@ homepage = "https://github.com/nrminor/checkle"
 documentation = "https://github.com/nrminor/checkle/blob/main/README.md"
 keywords = ["science", "reproducibility", "bioinformatics", "data"]
 categories = ["command-line-utilities", "science"]
+build = "build.rs"
 
 [features]
 default = ["archives"]
