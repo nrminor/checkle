@@ -20,9 +20,7 @@ fn test_hash_output_to_file() {
         .arg("--hash-output")
         .arg(&output_file);
 
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("65a8e27d8879283831b664bd8b7f0ad4"));
+    cmd.assert().success().stdout(predicate::str::is_empty()); // No stdout output when using --hash-output
 
     // Verify output file exists and contains the hash
     assert!(output_file.exists(), "Output file should exist");

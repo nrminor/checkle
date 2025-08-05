@@ -12,11 +12,12 @@ use std::{
 use crate::{
     buffer_pool::BufferPool,
     constants::{
-        CHUNK_SIZE, DEFAULT_CHUNK_SIZE, MAX_CHUNK_COUNT, MAX_CHUNK_SIZE, MAX_FILES_IN_BATCH,
-        MAX_PARALLEL_READERS, MD5_SIZE, MIN_CHUNK_SIZE, PARALLEL_IO_THRESHOLD, SHA_SIZE,
+        CHUNK_SIZE, DEFAULT_CHUNK_SIZE, MAX_CHUNK_COUNT, MAX_CHUNK_SIZE, MAX_PARALLEL_READERS,
+        MD5_SIZE, MIN_CHUNK_SIZE, PARALLEL_IO_THRESHOLD, SHA_SIZE,
     },
     errors::{CheckleError, Result},
     io::FilesToCheck,
+    simd,
 };
 
 /// Represents a region of a file to be processed by one thread during parallel I/O.
@@ -1115,11 +1116,7 @@ impl<'a, const N: usize> Hasher<'a, N> {
         };
 
         // Convert the binary hash to a hexadecimal string
-        let hex_hash = root_hash_array.iter().fold(String::new(), |mut acc, byte| {
-            use std::fmt::Write;
-            let _ = write!(acc, "{byte:02x}");
-            acc
-        });
+        let hex_hash = crate::simd::bytes_to_hex(&root_hash_array);
 
         debug!("Hashing of {} was successful.", self.path.display());
 
@@ -1133,7 +1130,7 @@ impl<'a, const N: usize> Hasher<'a, N> {
             N * 2
         );
         assert!(
-            hex_hash.chars().all(|c| c.is_ascii_hexdigit()),
+            simd::is_hex_string(&hex_hash),
             "Hash string must contain only hexadecimal characters"
         );
 
@@ -1168,7 +1165,7 @@ impl<'a, const N: usize> Hasher<'a, N> {
         }
 
         // Validate hash contains only hexadecimal characters
-        if !old_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        if !simd::is_hex_string(old_hash) {
             return Err(CheckleError::InvalidChecksumFile(self.path.to_path_buf()));
         }
 
@@ -1277,12 +1274,6 @@ impl FilesToCheck {
         // Precondition assertions
         let files_vec = self.to_vec();
         assert!(!files_vec.is_empty(), "Files list must not be empty");
-        assert!(
-            files_vec.len() <= MAX_FILES_IN_BATCH,
-            "File count exceeds maximum batch size: {} > {}",
-            files_vec.len(),
-            MAX_FILES_IN_BATCH
-        );
 
         let results = files_vec
             .into_par_iter()
@@ -1411,10 +1402,9 @@ mod tests {
         // Verify result
         assert!(result.is_ok(), "MD5 hashing should succeed");
         let hash = result.unwrap();
-        assert_eq!(hash.len(), 32, "MD5 hash should be 32 characters long");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should contain only hex digits"
+            simd::validate_hash(&hash, 32),
+            "MD5 hash should be 32 characters long and hexadecimal"
         );
 
         // Known MD5 of "Hello, World!" is 65a8e27d8879283831b664bd8b7f0ad4
@@ -1436,10 +1426,9 @@ mod tests {
         // Verify result
         assert!(result.is_ok(), "SHA256 hashing should succeed");
         let hash = result.unwrap();
-        assert_eq!(hash.len(), 64, "SHA256 hash should be 64 characters long");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should contain only hex digits"
+            simd::validate_hash(&hash, 64),
+            "SHA256 hash should be 64 characters long and hexadecimal"
         );
 
         // Known SHA256 of "Hello, World!" is dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f
@@ -1601,10 +1590,9 @@ mod tests {
         // Verify result
         assert!(result.is_ok(), "Large file hashing should succeed");
         let hash = result.unwrap();
-        assert_eq!(hash.len(), 32, "MD5 hash should be 32 characters long");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should contain only hex digits"
+            simd::validate_hash(&hash, 32),
+            "MD5 hash should be 32 characters long and hexadecimal"
         );
     }
 
@@ -1769,12 +1757,12 @@ mod tests {
             // Test MD5 hex content
             let hasher_md5 = Hasher::new_md5(temp_file.path());
             let hash_md5 = hasher_md5.find_root_hash().expect("MD5 hash should succeed");
-            prop_assert!(hash_md5.chars().all(|c| c.is_ascii_hexdigit()), "MD5 hash should be hexadecimal");
+            prop_assert!(simd::is_hex_string(&hash_md5), "MD5 hash should be hexadecimal");
 
             // Test SHA256 hex content
             let hasher_sha = Hasher::new_sha2(temp_file.path());
             let hash_sha = hasher_sha.find_root_hash().expect("SHA256 hash should succeed");
-            prop_assert!(hash_sha.chars().all(|c| c.is_ascii_hexdigit()), "SHA256 hash should be hexadecimal");
+            prop_assert!(simd::is_hex_string(&hash_sha), "SHA256 hash should be hexadecimal");
         }
 
         // Property 5: Merkle tree correctness with multiple chunk sizes
@@ -1964,10 +1952,9 @@ mod tests {
 
         assert!(result.is_ok(), "10MB file hashing should succeed");
         let hash = result.unwrap();
-        assert_eq!(hash.len(), 32, "MD5 hash should be 32 characters");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should be hexadecimal"
+            simd::validate_hash(&hash, 32),
+            "MD5 hash should be 32 characters and hexadecimal"
         );
     }
 
@@ -2992,15 +2979,13 @@ mod tests {
             .find_root_hash()
             .expect("SHA2 hash should succeed");
 
-        assert_eq!(hash_md5.len(), 32, "MD5 hash should be 32 characters");
-        assert_eq!(hash_sha2.len(), 64, "SHA2 hash should be 64 characters");
         assert!(
-            hash_md5.chars().all(|c| c.is_ascii_hexdigit()),
-            "MD5 hash should be hex"
+            simd::validate_hash(&hash_md5, 32),
+            "MD5 hash should be 32 characters and hex"
         );
         assert!(
-            hash_sha2.chars().all(|c| c.is_ascii_hexdigit()),
-            "SHA2 hash should be hex"
+            simd::validate_hash(&hash_sha2, 64),
+            "SHA2 hash should be 64 characters and hex"
         );
     }
 
@@ -3073,10 +3058,9 @@ mod tests {
 
         // Verify postconditions
         assert!(!hash.is_empty(), "Postcondition: hash not empty");
-        assert_eq!(hash.len(), 32, "Postcondition: MD5 hash length");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
-            "Postcondition: hash is hexadecimal"
+            simd::validate_hash(&hash, 32),
+            "Postcondition: MD5 hash should be 32 characters and hexadecimal"
         );
     }
 
@@ -3164,15 +3148,13 @@ mod tests {
         );
 
         // Hashes should be valid
-        assert_eq!(hash_default.len(), 32, "Default hash should be valid");
-        assert_eq!(hash_configured.len(), 32, "Configured hash should be valid");
         assert!(
-            hash_default.chars().all(|c| c.is_ascii_hexdigit()),
-            "Default hash should be hex"
+            simd::validate_hash(&hash_default, 32),
+            "Default hash should be valid 32-char hex"
         );
         assert!(
-            hash_configured.chars().all(|c| c.is_ascii_hexdigit()),
-            "Configured hash should be hex"
+            simd::validate_hash(&hash_configured, 32),
+            "Configured hash should be valid 32-char hex"
         );
 
         // Performance overhead should be minimal (within 3x)

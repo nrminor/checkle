@@ -1,5 +1,3 @@
-use std::{path::PathBuf, str::FromStr};
-
 use crate::hashing::HashingAlgo;
 use clap::{
     ArgAction, Error, Id, Parser, Subcommand,
@@ -11,6 +9,7 @@ use clap::{
 };
 use clap_complete::Shell;
 use clap_verbosity_flag::WarnLevel;
+use std::{path::PathBuf, str::FromStr};
 
 pub const INFO: &str = r#"
    ___    _  _     ___     ___    _  __    _       ___   
@@ -285,6 +284,14 @@ pub enum Commands {
             action = ArgAction::SetTrue
         )]
         pretty: PrettyPrint,
+
+        #[arg(
+            long = "no-progress",
+            help = "Hide progress bars during operation",
+            help_heading = "Output Options",
+            action = ArgAction::SetTrue
+        )]
+        no_progress: NoProgress,
     },
 
     #[clap(
@@ -312,7 +319,8 @@ pub enum Commands {
             long = "pretty",
             help = "Display verification results in a formatted table to stderr with summary",
             help_heading = "Output Options",
-            action = ArgAction::SetTrue
+            action = ArgAction::SetTrue,
+            conflicts_with = "report"
         )]
         pretty: PrettyPrint,
 
@@ -334,6 +342,24 @@ pub enum Commands {
             conflicts_with = "pretty"
         )]
         format: Option<OutputFormat>,
+
+        #[arg(
+            short = 'b',
+            long = "max-files-batch",
+            help = "Maximum number of files to process in a single batch",
+            help_heading = "Performance Options",
+            value_name = "NUM",
+            value_parser = utils::parse_max_files_batch
+        )]
+        max_files_batch: Option<usize>,
+
+        #[arg(
+            long = "no-progress",
+            help = "Hide progress bars during operation",
+            help_heading = "Output Options",
+            action = ArgAction::SetTrue
+        )]
+        no_progress: NoProgress,
     },
 
     #[clap(
@@ -380,7 +406,8 @@ pub enum Commands {
             long = "pretty",
             help = "Display results in a formatted table to stderr",
             help_heading = "Output Options",
-            action = ArgAction::SetTrue
+            action = ArgAction::SetTrue,
+            conflicts_with = "hash_output"
         )]
         pretty: PrettyPrint,
 
@@ -666,6 +693,16 @@ pub type PerFileMode = bool;
 /// ```
 pub type PrettyPrint = bool;
 
+/// Type alias for progress display suppression flag.
+///
+/// When true, disables progress bars and status updates during operations.
+pub type NoProgress = bool;
+
+/// Type alias for gitignore bypass flag.
+///
+/// When true, processes files that would normally be ignored by .gitignore rules.
+pub type NoIgnore = bool;
+
 mod utils {
     use crate::errors::CheckleError;
 
@@ -771,6 +808,9 @@ mod tests {
     use proptest::prelude::*;
     use proptest::test_runner::{Config, FileFailurePersistence};
     use std::ffi::OsStr;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    use std::time::Instant;
     use utils::*;
 
     // Test 1: Normal operation - HashingAlgo FromStr parsing
@@ -810,6 +850,7 @@ mod tests {
                 hash,
                 per_file: _,
                 pretty: _,
+                no_progress: _,
             }) => {
                 assert_eq!(input_file, PathBuf::from("/path/to/file.txt"));
                 assert_eq!(hash, Some("abcdef1234567890abcdef1234567890".to_string()));
@@ -856,6 +897,8 @@ mod tests {
                 pretty: _,
                 report: _,
                 format: _,
+                max_files_batch: _,
+                no_progress: _,
             }) => {
                 assert_eq!(checksum_file, Some(PathBuf::from("/path/to/checksums.txt")));
             }
@@ -1001,7 +1044,6 @@ mod tests {
         // Create invalid UTF-8 OsStr (this is platform-specific behavior)
         #[cfg(unix)]
         {
-            use std::os::unix::ffi::OsStrExt;
             let invalid_utf8 = OsStr::from_bytes(&[0xFF, 0xFE]);
 
             let result = parser.parse_ref(&clap::Command::new("test"), None, invalid_utf8);
@@ -1419,8 +1461,6 @@ mod tests {
     // Test 36: Performance test - CLI parsing time
     #[test]
     fn test_cli_parsing_performance() {
-        use std::time::Instant;
-
         let args = vec![
             "checkle",
             "--algorithm",

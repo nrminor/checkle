@@ -3,44 +3,14 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    rust-overlay.url = "github:oxalica/rust-overlay";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
+  outputs = { self, nixpkgs, flake-utils, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlays = [ (import rust-overlay) ];
         pkgs = import nixpkgs {
-          inherit system overlays;
-        };
-        
-        rustStable = pkgs.rust-bin.stable.latest.default.override {
-          extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
-          targets = [
-            "x86_64-unknown-linux-gnu"
-            "x86_64-unknown-linux-musl"
-            "aarch64-unknown-linux-gnu"
-            "aarch64-unknown-linux-musl"
-            "x86_64-apple-darwin"
-            "aarch64-apple-darwin"
-            "x86_64-pc-windows-msvc"
-            "aarch64-pc-windows-msvc"
-          ];
-        };
-        
-        rustNightly = pkgs.rust-bin.nightly.latest.default.override {
-          extensions = [ "rust-src" "rustfmt" "clippy" "rust-analyzer" ];
-          targets = [
-            "x86_64-unknown-linux-gnu"
-            "x86_64-unknown-linux-musl"
-            "aarch64-unknown-linux-gnu"
-            "aarch64-unknown-linux-musl"
-            "x86_64-apple-darwin"
-            "aarch64-apple-darwin"
-            "x86_64-pc-windows-msvc"
-            "aarch64-pc-windows-msvc"
-          ];
+          inherit system;
         };
       in
       {
@@ -58,8 +28,8 @@
         
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            rustStable
-            rustNightly
+            # Install rustup to manage toolchains properly
+            rustup
             pkg-config
             just
             pre-commit
@@ -104,9 +74,23 @@
 
           shellHook = ''
             echo "checkle development environment"
+            
+            # Set up rustup with stable and nightly toolchains
+            export RUSTUP_HOME=$PWD/.rustup
+            export CARGO_HOME=$PWD/.cargo
+            export PATH=$CARGO_HOME/bin:$PATH
+            
+            if [ ! -d "$RUSTUP_HOME" ]; then
+              echo "Setting up Rust toolchains..."
+              rustup default stable
+              rustup toolchain install nightly
+              rustup component add rust-src rustfmt clippy rust-analyzer --toolchain stable
+              rustup component add rust-src rustfmt clippy rust-analyzer --toolchain nightly
+            fi
+            
             echo "Rust toolchains available:"
-            echo "  - Stable: rustc (default)"
-            echo "  - Nightly: rustc +nightly"
+            echo "  - Stable: cargo (default)"
+            echo "  - Nightly: cargo +nightly"
             echo "Run 'just' to see available commands"
           '';
 

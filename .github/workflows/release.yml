@@ -6,8 +6,18 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
+  # Run all CI checks before creating release
+  ci-stable:
+    name: CI Stable Checks
+    uses: ./.github/workflows/ci-stable.yml
+
+  ci-simd:
+    name: CI SIMD Checks
+    uses: ./.github/workflows/ci-simd.yml
+
   create-release:
     name: Create Release
+    needs: [ci-stable, ci-simd]  # Only create release if all tests pass
     runs-on: ubuntu-latest
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
@@ -20,6 +30,16 @@ jobs:
         with:
           tag_name: ${{ github.ref }}
           release_name: Release ${{ github.ref }}
+          body: |
+            ## Release ${{ github.ref }}
+            
+            This release includes SIMD-optimized binaries for improved performance on modern CPUs.
+            
+            ### Binary Types
+            - **Standard binaries**: Built with stable Rust, maximum compatibility
+            - **SIMD binaries**: Built with nightly Rust and SIMD optimizations, ~5% faster for large files
+            
+            Choose SIMD binaries if your CPU supports AVX2 (Intel/AMD from 2013+) or NEON (all ARM64).
           draft: false
           prerelease: false
 
@@ -30,83 +50,186 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux builds using cargo-zigbuild
+          # Linux x86_64 - Standard
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             archive: tar.gz
-            use_zigbuild: true
+            features: ""
+            rustflags: ""
+            suffix: ""
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             archive: tar.gz
-            use_zigbuild: true
+            features: ""
+            rustflags: ""
+            suffix: ""
+          
+          # Linux x86_64 - SIMD
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            features: "simd"
+            rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
+            suffix: "-simd"
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            archive: tar.gz
+            features: "simd"
+            rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
+            suffix: "-simd"
+          
+          # Linux ARM64 - Standard
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             archive: tar.gz
-            use_zigbuild: true
+            features: ""
+            rustflags: ""
+            suffix: ""
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             archive: tar.gz
-            use_zigbuild: true
+            features: ""
+            rustflags: ""
+            suffix: ""
           
-          # macOS builds using cargo-zigbuild
-          - os: macos-latest
+          # Linux ARM64 - SIMD
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+            features: "simd"
+            rustflags: "-C target-feature=+neon"
+            suffix: "-simd"
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            archive: tar.gz
+            features: "simd"
+            rustflags: "-C target-feature=+neon"
+            suffix: "-simd"
+          
+          # macOS Intel - Standard
+          - os: macos-13  # Intel runner
             target: x86_64-apple-darwin
             archive: tar.gz
-            use_zigbuild: true
-          - os: macos-latest
+            features: ""
+            rustflags: ""
+            suffix: ""
+          
+          # macOS Intel - SIMD
+          - os: macos-13  # Intel runner
+            target: x86_64-apple-darwin
+            archive: tar.gz
+            features: "simd"
+            rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
+            suffix: "-simd"
+          
+          # macOS ARM64 - Standard
+          - os: macos-latest  # M1 runner
             target: aarch64-apple-darwin
             archive: tar.gz
-            use_zigbuild: true
+            features: ""
+            rustflags: ""
+            suffix: ""
           
-          # Windows builds (native)
+          # macOS ARM64 - SIMD
+          - os: macos-latest  # M1 runner
+            target: aarch64-apple-darwin
+            archive: tar.gz
+            features: "simd"
+            rustflags: "-C target-feature=+neon"
+            suffix: "-simd"
+          
+          # Windows x86_64 - Standard
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             archive: zip
-            use_zigbuild: false
+            features: ""
+            rustflags: ""
+            suffix: ""
+          
+          # Windows x86_64 - SIMD
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            features: "simd"
+            rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
+            suffix: "-simd"
+          
+          # Windows ARM64 - Standard
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             archive: zip
-            use_zigbuild: false
+            features: ""
+            rustflags: ""
+            suffix: ""
+          
+          # Windows ARM64 - SIMD
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            archive: zip
+            features: "simd"
+            rustflags: "-C target-feature=+neon"
+            suffix: "-simd"
 
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust
+      - name: Install Rust (stable for standard builds)
+        if: matrix.features == ''
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       
+      - name: Install Rust (nightly for SIMD builds)
+        if: matrix.features != ''
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+      
       - name: Setup uv
-        if: matrix.use_zigbuild
+        if: matrix.os == 'ubuntu-latest'
         uses: astral-sh/setup-uv@v3
       
       - name: Install cargo-zigbuild
-        if: matrix.use_zigbuild
+        if: matrix.os == 'ubuntu-latest'
         run: |
           uv pip install --system ziglang
           cargo install --locked cargo-zigbuild
       
-      - name: Build with cargo-zigbuild
-        if: matrix.use_zigbuild
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+      - name: Build with cargo-zigbuild (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo zigbuild --release --features ${{ matrix.features }} --target ${{ matrix.target }}
+          else
+            cargo zigbuild --release --target ${{ matrix.target }}
+          fi
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
       
-      - name: Build with cargo
-        if: ${{ !matrix.use_zigbuild }}
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Build with cargo (non-Ubuntu)
+        if: matrix.os != 'ubuntu-latest'
+        run: |
+          if [ -n "${{ matrix.features }}" ]; then
+            cargo build --release --features ${{ matrix.features }} --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
       
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf checkle-${{ matrix.target }}.tar.gz checkle
-          mv checkle-${{ matrix.target }}.tar.gz ../../../
+          tar czf checkle-${{ matrix.target }}${{ matrix.suffix }}.tar.gz checkle
+          mv checkle-${{ matrix.target }}${{ matrix.suffix }}.tar.gz ../../../
       
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           cd target/${{ matrix.target }}/release
-          Compress-Archive -Path checkle.exe -DestinationPath ../../../checkle-${{ matrix.target }}.zip
+          Compress-Archive -Path checkle.exe -DestinationPath ../../../checkle-${{ matrix.target }}${{ matrix.suffix }}.zip
       
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
@@ -114,6 +237,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./checkle-${{ matrix.target }}.${{ matrix.archive }}
-          asset_name: checkle-${{ matrix.target }}.${{ matrix.archive }}
+          asset_path: ./checkle-${{ matrix.target }}${{ matrix.suffix }}.${{ matrix.archive }}
+          asset_name: checkle-${{ matrix.target }}${{ matrix.suffix }}.${{ matrix.archive }}
           asset_content_type: application/octet-stream

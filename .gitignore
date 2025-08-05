@@ -50,6 +50,22 @@
 !/src/hashing.rs
 !/src/io.rs
 !/src/prelude.rs
+!/src/constants.rs
+!/src/buffer_pool.rs
+!/src/archive.rs
+!/src/simd.rs
+!/src/prettyprint.rs
+!/src/progress.rs
+!/src/data_source.rs
+!/src/archive_path.rs
+
+# Commands subdirectory
+!/src/commands/
+!/src/commands/*.rs
+!/src/commands/mod.rs
+!/src/commands/hash.rs
+!/src/commands/verify.rs
+!/src/commands/verify_many.rs
 
 # -----------------------------------------------------------------------------
 # Tests
@@ -58,6 +74,7 @@
 !/tests/
 !/tests/README.md
 !/tests/verify_hashes.sh
+!/tests/*.rs
 !/tests/data/
 !/tests/data/empty.txt
 !/tests/data/single_line.txt
@@ -92,6 +109,7 @@
 !/benches/
 !/benches/README.md
 !/benches/benchmark_checksums.sh
+!/benches/*.rs
 !/benches/test_data/
 # Note: large generated benchmark data files are not tracked
 

@@ -8,6 +8,7 @@ set -euo pipefail
 REPO="nrminor/checkle"
 BINARY_NAME="checkle"
 INSTALL_DIR="${HOME}/.local/bin"
+USE_SIMD=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -81,7 +82,14 @@ install_binary() {
 		archive_ext="zip"
 	fi
 
-	local download_url="https://github.com/${REPO}/releases/download/${version}/${BINARY_NAME}-${platform}.${archive_ext}"
+	# Add -simd suffix if SIMD build requested
+	local binary_suffix=""
+	if [[ "$USE_SIMD" == "true" ]]; then
+		binary_suffix="-simd"
+		info "Using SIMD-optimized build"
+	fi
+
+	local download_url="https://github.com/${REPO}/releases/download/${version}/${BINARY_NAME}-${platform}${binary_suffix}.${archive_ext}"
 	local temp_dir=$(mktemp -d)
 
 	info "Downloading ${BINARY_NAME} ${version} for ${platform}..."
@@ -151,8 +159,33 @@ build_from_source() {
 	info "Successfully built and installed ${BINARY_NAME}"
 }
 
+# Parse command line arguments
+parse_args() {
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+		--simd)
+			USE_SIMD=true
+			shift
+			;;
+		-h | --help)
+			echo "Usage: $0 [--simd] [--help]"
+			echo "  --simd    Install SIMD-optimized build (requires modern CPU)"
+			echo "  --help    Show this help message"
+			exit 0
+			;;
+		*)
+			warn "Unknown option: $1"
+			echo "Use --help for usage information"
+			exit 1
+			;;
+		esac
+	done
+}
+
 # Main installation logic
 main() {
+	parse_args "$@"
+	
 	info "Installing ${BINARY_NAME}..."
 
 	local platform=$(detect_platform)

@@ -87,7 +87,10 @@ impl BufferPool {
         if capacity == 0 || capacity > MAX_POOL_CAPACITY {
             return Err(BufferPoolError::InvalidCapacity);
         }
-        if buffer_size == 0 || buffer_size > MAX_BUFFER_SIZE || buffer_size % PAGE_SIZE != 0 {
+        if buffer_size == 0
+            || buffer_size > MAX_BUFFER_SIZE
+            || !buffer_size.is_multiple_of(PAGE_SIZE)
+        {
             return Err(BufferPoolError::InvalidBufferSize);
         }
 
@@ -113,7 +116,7 @@ impl BufferPool {
                 "Buffer size {buffer_size} exceeds maximum {MAX_BUFFER_SIZE}"
             );
             assert!(
-                buffer_size % PAGE_SIZE == 0,
+                buffer_size.is_multiple_of(PAGE_SIZE),
                 "Buffer size {buffer_size} must be aligned to page boundaries ({PAGE_SIZE}B)"
             );
             assert!(

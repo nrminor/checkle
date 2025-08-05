@@ -33,6 +33,7 @@ use crate::{
     },
     errors::{CheckleError, Result},
     hashing::{HashArray, HashingAlgo, MerkleIter},
+    simd,
 };
 
 // ============================================================================
@@ -106,7 +107,7 @@ const _: () = assert!(
     "ARCHIVE_BUFFER_SIZE must fit within buffer pool limits"
 );
 const _: () = assert!(
-    ARCHIVE_BUFFER_SIZE % PAGE_SIZE == 0,
+    ARCHIVE_BUFFER_SIZE.is_multiple_of(PAGE_SIZE),
     "ARCHIVE_BUFFER_SIZE should be page-aligned"
 );
 
@@ -684,7 +685,7 @@ impl Archive {
         // Postcondition assertions (Tiger Style: minimum 2 per function)
         assert!(!hash.is_empty(), "Hash must not be empty");
         assert!(
-            hash.chars().all(|c| c.is_ascii_hexdigit()),
+            crate::simd::is_hex_string(&hash),
             "Hash must contain only hexadecimal characters"
         );
 
@@ -1264,7 +1265,7 @@ mod tar_impl {
             // Postcondition assertions (Tiger Style: minimum 2 per function)
             assert!(!hash.is_empty(), "Hash must not be empty");
             assert!(
-                hash.chars().all(|c| c.is_ascii_hexdigit()),
+                crate::simd::is_hex_string(&hash),
                 "Hash must be hexadecimal"
             );
 
@@ -1779,7 +1780,7 @@ mod zip_impl {
             // Postcondition assertions (Tiger Style: minimum 2 per function)
             assert!(!hash.is_empty(), "Hash must not be empty");
             assert!(
-                hash.chars().all(|c| c.is_ascii_hexdigit()),
+                crate::simd::is_hex_string(&hash),
                 "Hash must be hexadecimal"
             );
 
@@ -2141,10 +2142,7 @@ fn compute_hash_for_reader<R: Read>(
 
     // Postcondition assertions (Tiger Style: minimum 2 per function)
     assert!(!hash.is_empty(), "Hash must not be empty");
-    assert!(
-        hash.chars().all(|c| c.is_ascii_hexdigit()),
-        "Hash must be hexadecimal"
-    );
+    assert!(simd::is_hex_string(&hash), "Hash must be hexadecimal");
 
     Ok(hash)
 }
@@ -2164,11 +2162,7 @@ fn hash_bytes_to_hex<const N: usize>(hash_bytes: [u8; N]) -> String {
     assert!(N > 0, "Hash size must be positive");
     assert!(N <= 64, "Hash size must be reasonable");
 
-    let hex_string = hash_bytes.iter().fold(String::new(), |mut acc, byte| {
-        use std::fmt::Write;
-        let _ = write!(acc, "{byte:02x}");
-        acc
-    });
+    let hex_string = crate::simd::bytes_to_hex(&hash_bytes);
 
     // Postcondition assertions (Tiger Style: minimum 2 per function)
     assert_eq!(
@@ -2177,7 +2171,7 @@ fn hash_bytes_to_hex<const N: usize>(hash_bytes: [u8; N]) -> String {
         "Hex string length matches hash size"
     );
     assert!(
-        hex_string.chars().all(|c| c.is_ascii_hexdigit()),
+        simd::is_hex_string(&hex_string),
         "Hex string contains only hex digits"
     );
 
@@ -2543,7 +2537,7 @@ fn hash_reader_sequential<R: Read>(
         "Root hash string must not be empty"
     );
     assert!(
-        root_hash_string.chars().all(|c| c.is_ascii_hexdigit()),
+        simd::is_hex_string(&root_hash_string),
         "Hash string must contain only hexadecimal characters"
     );
 
@@ -2852,7 +2846,7 @@ pub fn compute_hash<R: Read>(reader: &mut R, algo: &HashingAlgo) -> Result<Strin
                     }
                 }
             }
-            hex::encode(hasher.finalize())
+            crate::simd::bytes_to_hex(&hasher.finalize())
         }
         HashingAlgo::Md5 => {
             let mut hasher = Md5::new();
@@ -2867,14 +2861,14 @@ pub fn compute_hash<R: Read>(reader: &mut R, algo: &HashingAlgo) -> Result<Strin
                     }
                 }
             }
-            hex::encode(hasher.finalize())
+            crate::simd::bytes_to_hex(&hasher.finalize())
         }
     };
 
     // Postcondition assertions (Tiger Style: minimum 2 per function)
     assert!(!hash_string.is_empty(), "Hash string must not be empty");
     assert!(
-        hash_string.chars().all(|c| c.is_ascii_hexdigit()),
+        simd::is_hex_string(&hash_string),
         "Hash string must be hexadecimal"
     );
 
