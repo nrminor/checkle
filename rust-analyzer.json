@@ -1,11 +1,13 @@
 {
   "cargo": {
-    "features": "all",
+    "features": ["default", "simd"],
     "allTargets": true
   },
   "check": {
     "allTargets": true,
     "command": "clippy",
+    "features": ["default", "simd"],
+    "extraArgs": ["--", "-D", "warnings"],
     "targets": [
       "x86_64-apple-darwin",
       "aarch64-apple-darwin",
