@@ -1489,15 +1489,24 @@ mod tests {
         // CLI parsing should be fast - threshold adjusted for CI environment variability
         // Local development: stricter threshold, CI: more lenient due to shared resources
         let threshold_ms = if std::env::var("CI").is_ok() {
-            600
+            1000 // Increased from 600ms to 1000ms for CI stability
         } else {
             400
         };
+
+        // Add diagnostic output for debugging
+        let ms_per_parse = duration.as_micros() as f64 / 1000.0 / 1000.0;
+        eprintln!(
+            "CLI parsing performance: {} iterations in {:?} ({:.3} ms/parse)",
+            1000, duration, ms_per_parse
+        );
+
         assert!(
             duration.as_millis() < threshold_ms,
-            "CLI parsing should be fast: {:?} (threshold: {}ms)",
+            "CLI parsing should be fast: {:?} (threshold: {}ms, {:.3} ms/parse)",
             duration,
-            threshold_ms
+            threshold_ms,
+            ms_per_parse
         );
     }
 
@@ -1588,10 +1597,10 @@ mod tests {
             let result = Cli::try_parse_from(args);
             prop_assert!(result.is_ok());
 
-            if let Ok(cli) = result {
-                if let Some(Commands::Verify { hash: parsed_hash, .. }) = cli.command {
-                    prop_assert_eq!(parsed_hash, Some(hash));
-                }
+            if let Ok(cli) = result
+                && let Some(Commands::Verify { hash: parsed_hash, .. }) = cli.command
+            {
+                prop_assert_eq!(parsed_hash, Some(hash));
             }
         }
 

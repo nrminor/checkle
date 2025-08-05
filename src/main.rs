@@ -294,10 +294,10 @@ mod preflight {
     fn check_linux_storage_type() -> bool {
         for device in ["sda", "nvme0n1", "vda", "xvda"] {
             let rotational_path = format!("/sys/block/{device}/queue/rotational");
-            if let Ok(content) = std::fs::read_to_string(&rotational_path) {
-                if content.trim() == "0" {
-                    return true;
-                }
+            if let Ok(content) = std::fs::read_to_string(&rotational_path)
+                && content.trim() == "0"
+            {
+                return true;
             }
         }
 

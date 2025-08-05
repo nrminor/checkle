@@ -13,6 +13,7 @@ on:
       - 'justfile'
       - '.github/workflows/ci-stable.yml'
   pull_request:
+  workflow_call:
     branches: [ main ]
     paths:
       - 'src/**'

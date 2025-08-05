@@ -634,7 +634,7 @@ mod tests {
                 prop_assert!(result.chars().all(|c| !c.is_ascii_uppercase()));
 
                 // Can parse back to original bytes
-                let parsed = hex::decode(&result).unwrap();
+                let parsed = hex::decode(&result).expect("SIMD hex output must be valid hex");
                 prop_assert_eq!(parsed, bytes);
             }
         }
@@ -761,8 +761,7 @@ mod tests {
             for c in "0123456789abcdefABCDEF".chars() {
                 assert!(
                     is_hex_string_simd(&c.to_string()),
-                    "Character '{}' should be valid hex",
-                    c
+                    "Character '{c}' should be valid hex"
                 );
             }
 
@@ -770,8 +769,7 @@ mod tests {
             for c in "ghijklmnopqrstuvwxyzGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()".chars() {
                 assert!(
                     !is_hex_string_simd(&c.to_string()),
-                    "Character '{}' should be invalid hex",
-                    c
+                    "Character '{c}' should be invalid hex"
                 );
             }
         }

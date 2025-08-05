@@ -452,14 +452,14 @@ mod output_format_tests {
                     "Explicit format should match for {args:?}"
                 );
 
-                if format.is_none() {
-                    if let Some(ref output_path) = hash_output {
-                        let detected = OutputFormat::detect_from_path(output_path);
-                        assert_eq!(
-                            detected, expected_detected,
-                            "Auto-detected format should match for {args:?}"
-                        );
-                    }
+                if format.is_none()
+                    && let Some(ref output_path) = hash_output
+                {
+                    let detected = OutputFormat::detect_from_path(output_path);
+                    assert_eq!(
+                        detected, expected_detected,
+                        "Auto-detected format should match for {args:?}"
+                    );
                 }
             } else {
                 panic!("Expected Hash command for {args:?}");

@@ -13,6 +13,7 @@ on:
       - 'justfile'
       - '.github/workflows/ci-simd.yml'
   pull_request:
+  workflow_call:
     branches: [ main ]
     paths:
       - 'src/**'
@@ -92,7 +93,7 @@ jobs:
           - os: macos-latest  # M1 runner
             target: aarch64-apple-darwin
             rustflags: "-C target-feature=+neon"
-          # Linux ARM64 with NEON
+          # Linux ARM64 with NEON (cross-compiled)
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             rustflags: "-C target-feature=+neon"
@@ -111,6 +112,7 @@ jobs:
         run: cargo build --release --features simd --target ${{ matrix.target }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
       - name: Upload SIMD artifact
         uses: actions/upload-artifact@v4
         with:
