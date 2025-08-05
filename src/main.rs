@@ -343,7 +343,7 @@ mod preflight {
     fn check_windows_storage_type() -> bool {
         let script = "Get-PhysicalDisk | Where-Object {$_.MediaType -eq 'SSD'} | Measure-Object | Select-Object -ExpandProperty Count";
 
-        let output = Command::new("powershell")
+        let output = std::process::Command::new("powershell")
             .args(&["-Command", script])
             .output()
             .ok();

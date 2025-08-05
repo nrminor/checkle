@@ -1049,6 +1049,8 @@ mod tests {
             let result = parser.parse_ref(&clap::Command::new("test"), None, invalid_utf8);
             assert!(result.is_err());
         }
+
+        _ = parser;
     }
 
     // Test 15: CLI version and help info
