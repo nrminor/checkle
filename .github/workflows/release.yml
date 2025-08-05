@@ -189,12 +189,15 @@ Choose SIMD binaries if your CPU supports AVX2 (Intel/AMD from 2013+) or NEON (a
       - name: Install cargo-zigbuild
         if: matrix.os == 'ubuntu-latest'
         run: |
-          uv pip install --system ziglang
+          uv venv
+          source .venv/bin/activate
+          uv pip install ziglang
           cargo install --locked cargo-zigbuild
       
       - name: Build with cargo-zigbuild (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
         run: |
+          source .venv/bin/activate
           if [ -n "${{ matrix.features }}" ]; then
             cargo zigbuild --release --features ${{ matrix.features }} --target ${{ matrix.target }}
           else
@@ -243,6 +246,7 @@ Choose SIMD binaries if your CPU supports AVX2 (Intel/AMD from 2013+) or NEON (a
       - name: Upload Release Asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           gh release upload "${{ github.ref_name }}" \
             "./checkle-${{ matrix.target }}${{ matrix.suffix }}.${{ matrix.archive }}" \

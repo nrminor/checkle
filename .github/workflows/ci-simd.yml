@@ -109,11 +109,15 @@ jobs:
       - name: Install cargo-zigbuild
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          uv pip install --system ziglang
+          uv venv
+          source .venv/bin/activate
+          uv pip install ziglang
           cargo install --locked cargo-zigbuild
       - name: Build with SIMD (cross-compilation)
         if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
-        run: cargo zigbuild --release --features simd --target ${{ matrix.target }}
+        run: |
+          source .venv/bin/activate
+          cargo zigbuild --release --features simd --target ${{ matrix.target }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
       - name: Build with SIMD (native)
