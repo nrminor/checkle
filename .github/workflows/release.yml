@@ -19,29 +19,26 @@ jobs:
     name: Create Release
     needs: [ci-stable, ci-simd]  # Only create release if all tests pass
     runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v4
+      
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          body: |
-            ## Release ${{ github.ref }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "Release ${{ github.ref_name }}" \
+            --notes "## Release ${{ github.ref_name }}
             
-            This release includes SIMD-optimized binaries for improved performance on modern CPUs.
-            
-            ### Binary Types
-            - **Standard binaries**: Built with stable Rust, maximum compatibility
-            - **SIMD binaries**: Built with nightly Rust and SIMD optimizations, ~5% faster for large files
-            
-            Choose SIMD binaries if your CPU supports AVX2 (Intel/AMD from 2013+) or NEON (all ARM64).
-          draft: false
-          prerelease: false
+This release includes SIMD-optimized binaries for improved performance on modern CPUs.
+
+### Binary Types
+- **Standard binaries**: Built with stable Rust, maximum compatibility
+- **SIMD binaries**: Built with nightly Rust and SIMD optimizations, ~10-20x faster for hash validation
+
+Choose SIMD binaries if your CPU supports AVX2 (Intel/AMD from 2013+) or NEON (all ARM64)."
 
   build-release:
     name: Build Release
@@ -206,14 +203,26 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
       
-      - name: Build with cargo (non-Ubuntu)
-        if: matrix.os != 'ubuntu-latest'
+      - name: Build with cargo (macOS)
+        if: matrix.os != 'ubuntu-latest' && matrix.os != 'windows-latest'
         run: |
           if [ -n "${{ matrix.features }}" ]; then
             cargo build --release --features ${{ matrix.features }} --target ${{ matrix.target }}
           else
             cargo build --release --target ${{ matrix.target }}
           fi
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+      
+      - name: Build with cargo (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          if ("${{ matrix.features }}" -ne "") {
+            cargo build --release --features "${{ matrix.features }}" --target "${{ matrix.target }}"
+          } else {
+            cargo build --release --target "${{ matrix.target }}"
+          }
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
       
@@ -232,11 +241,9 @@ jobs:
           Compress-Archive -Path checkle.exe -DestinationPath ../../../checkle-${{ matrix.target }}${{ matrix.suffix }}.zip
       
       - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./checkle-${{ matrix.target }}${{ matrix.suffix }}.${{ matrix.archive }}
-          asset_name: checkle-${{ matrix.target }}${{ matrix.suffix }}.${{ matrix.archive }}
-          asset_content_type: application/octet-stream
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            "./checkle-${{ matrix.target }}${{ matrix.suffix }}.${{ matrix.archive }}" \
+            --clobber

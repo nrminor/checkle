@@ -19,11 +19,11 @@ like running checksums--just another thing you have to do at work--into a
 delight. "It's already finished??" is an unalloyed good in a world of mediocre
 to bad software experiences. Performance can also be the difference between a
 tool being accessible to those without the privilege of using expensive
-computers as the current state-of-the-art. And even when they are, performance
-that's better than it needs to be means letting less of an expensive machine go
-to waste. Like paying for an expensive gym but not using it, paying for an
-expensive computer with many cores and SIMD capability but not using it is a
-waste.
+computers at the current state-of-the-art. And even when they do have such a
+computer, performance that's better than it needs to be means letting less of an
+expensive machine go to waste. Like paying for an expensive gym membership but
+not using it, paying for an expensive computer with many cores and SIMD
+capability but not using it is a waste.
 
 So when we go to implement SIMD acceleration, tedious though it may be, we do it
 to reduce waste, make CPU engineers' hard work worth it, and put a smile on our
@@ -32,7 +32,7 @@ investment pays dividends, over and over and over again.
 
 ## Ranked SIMD Implementations by Value
 
-### 1. Hex String Conversion (HIGHEST PRIORITY - 10x speedup)
+### 1. Hex String Conversion (HIGHEST PRIORITY - 10x speedup) - DONE✅
 
 **Location**: `src/hashing.rs:1118-1122`
 
@@ -152,7 +152,7 @@ pub fn zero_buffer(buffer: &mut [u8]) {
 }
 ```
 
-### 3. Hash Validation (HIGH PRIORITY - 10-20x speedup)
+### 3. Hash Validation (HIGH PRIORITY - 10-20x speedup) - DONE✅
 
 **Location**: Multiple - `src/hashing.rs:1136,1171`, `src/io.rs:276`
 
@@ -250,32 +250,6 @@ pub fn parse_checksum_line(line: &str) -> Option<(&str, &str)> {
 
 This would require creating SIMD-aware implementations of MD5/SHA256 or using
 crates that provide them.
-
-## Implementation Timeline
-
-### Week 1: Foundation
-
-1. Add `portable_simd` feature flag to Cargo.toml
-2. Set up nightly toolchain configuration
-3. Create benchmark suite for baseline measurements
-
-### Week 2: Core Implementations
-
-1. Replace hex conversion implementation
-2. Replace buffer zeroing implementation
-3. Update all hash validation call sites
-
-### Week 3: Integration & Testing
-
-1. Replace checksum file parsing
-2. Comprehensive correctness testing
-3. Performance validation across platforms
-
-### Week 4: Polish
-
-1. Documentation updates
-2. Performance report generation
-3. CI/CD integration for nightly builds
 
 ## Technical Configuration
 

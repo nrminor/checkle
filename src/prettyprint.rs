@@ -1677,7 +1677,11 @@ mod tests {
         assert_eq!(pair.file(), temp_file.path());
         assert!(pair.file_size() > 0);
         assert!(pair.modified_time().is_some());
+        // Permissions are only available on Unix systems
+        #[cfg(unix)]
         assert!(pair.permissions().is_some());
+        #[cfg(not(unix))]
+        assert!(pair.permissions().is_none());
     }
 
     #[test]

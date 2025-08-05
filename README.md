@@ -296,3 +296,49 @@ The project enforces strict quality standards with comprehensive linting rules.
 
 - **Minimum supported Rust version**: 1.88.0
 - **For SIMD features**: Rust nightly (for `portable_simd`)
+
+### Working with AI Agents
+
+This codebase is designed to provide amble context, including goals, best
+practices, and strict rules, to work effectively with AI agents and assistants
+with vary context window sizes. These rules address code quality standards
+varying from project style considerations to critical performance and
+correctness considerations.
+
+#### Strict Rule Compliance
+
+Most importantly, AI agents must follow all development rules without exception,
+including:
+
+- Run `cargo fmt`, `cargo check`, and
+  `cargo clippy --all-targets --all-features -- -D warnings` before declaring
+  any work complete
+- Never add `#[allow()]` lint suppressions without explicit permission
+- Follow the Three-Test Rule: every change must include at least 3 tests
+- Each change must be carefully considered with respect to how its value
+  compares to the maintenance burden or "entropy" it introduces to the code base
+
+#### Frequent Context Loading
+
+Before making any changes, AI agents must read and understand:
+
+1. **AGENTS.md** - Complete development guidelines and project rules
+2. **README.md** - Project overview and goals
+3. **TIGER_STYLE.md** - Robustness principles
+4. **GRUG BRAIN DEVELOPER** - Simplicity principles
+
+#### Essential Guidelines for AI Agents
+
+- **Read AGENTS.md first**: This document contains comprehensive instructions
+  for working on the codebase
+- **Strict quality standards**: The project enforces zero clippy warnings and
+  comprehensive testing
+- **Performance focus**: Always consider multicore utilization and large file
+  handling
+- **Simple solutions**: Balance robustness with simplicity following Grug Brain
+  principles
+- **Bioinformatics context**: Remember this tool handles terabyte-scale genomics
+  files
+
+Working without reading these documents is unacceptable and will result in code
+that doesn't meet project standards.

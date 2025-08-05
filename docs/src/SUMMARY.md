@@ -24,3 +24,4 @@
 
 - [Development Setup](./contributing/setup.md)
 - [Building from Source](./contributing/building.md)
+- [Working with AI Agents](./contributing/ai-agents.md)

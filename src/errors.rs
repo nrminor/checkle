@@ -289,9 +289,18 @@ mod tests {
             debug_string.contains("FailedChecksum"),
             "Debug should show error variant"
         );
+        // Check that the debug string contains some part of the file path
+        // On Windows, the path might be formatted differently in Debug output
+        let path_str = temp_file.path().to_string_lossy();
+        let file_name = temp_file
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("temp");
         assert!(
-            debug_string.contains(&temp_file.path().to_string_lossy().to_string()),
-            "Debug should show file path"
+            debug_string.contains(file_name) || debug_string.contains(path_str.as_ref()),
+            "Debug should show file path or name. Debug string: {}",
+            debug_string
         );
     }
 

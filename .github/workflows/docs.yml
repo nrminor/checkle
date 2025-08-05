@@ -27,7 +27,16 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Cache mdbook
+        uses: actions/cache@v3
+        id: cache-mdbook
+        with:
+          path: /usr/local/bin/mdbook
+          key: mdbook-0.4.37
+      
       - name: Install mdbook
+        if: steps.cache-mdbook.outputs.cache-hit != 'true'
         run: |
           curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.37/mdbook-v0.4.37-x86_64-unknown-linux-gnu.tar.gz | tar -xz
           sudo mv mdbook /usr/local/bin/
@@ -52,7 +61,16 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Cache mdbook
+        uses: actions/cache@v3
+        id: cache-mdbook
+        with:
+          path: /usr/local/bin/mdbook
+          key: mdbook-0.4.37
+      
       - name: Install mdbook
+        if: steps.cache-mdbook.outputs.cache-hit != 'true'
         run: |
           curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.37/mdbook-v0.4.37-x86_64-unknown-linux-gnu.tar.gz | tar -xz
           sudo mv mdbook /usr/local/bin/

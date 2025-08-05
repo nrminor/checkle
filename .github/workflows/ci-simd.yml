@@ -103,16 +103,24 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Setup uv
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
+        uses: astral-sh/setup-uv@v3
+      - name: Install cargo-zigbuild
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-      - name: Build with SIMD
+          uv pip install --system ziglang
+          cargo install --locked cargo-zigbuild
+      - name: Build with SIMD (cross-compilation)
+        if: matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo zigbuild --release --features simd --target ${{ matrix.target }}
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+      - name: Build with SIMD (native)
+        if: "!(matrix.os == 'ubuntu-latest' && matrix.target == 'aarch64-unknown-linux-gnu')"
         run: cargo build --release --features simd --target ${{ matrix.target }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
       - name: Upload SIMD artifact
         uses: actions/upload-artifact@v4
         with:

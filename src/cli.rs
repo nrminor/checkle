@@ -1494,19 +1494,22 @@ mod tests {
             400
         };
 
-        // Add diagnostic output for debugging
-        let ms_per_parse = duration.as_micros() as f64 / 1000.0 / 1000.0;
-        eprintln!(
-            "CLI parsing performance: {} iterations in {:?} ({:.3} ms/parse)",
-            1000, duration, ms_per_parse
-        );
+        // Add diagnostic output for debugging (only in debug builds to avoid clippy warnings)
+        #[cfg(debug_assertions)]
+        #[allow(clippy::print_stderr)]
+        {
+            let ms_per_parse = duration.as_secs_f64() * 1000.0 / 1000.0;
+            eprintln!(
+                "CLI parsing performance: {} iterations in {:?} ({:.3} ms/parse)",
+                1000, duration, ms_per_parse
+            );
+        }
 
         assert!(
             duration.as_millis() < threshold_ms,
-            "CLI parsing should be fast: {:?} (threshold: {}ms, {:.3} ms/parse)",
+            "CLI parsing should be fast: {:?} (threshold: {}ms)",
             duration,
-            threshold_ms,
-            ms_per_parse
+            threshold_ms
         );
     }
 

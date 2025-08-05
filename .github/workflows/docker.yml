@@ -1,0 +1,59 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Dockerfile'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/docker.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Dockerfile'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/docker.yml'
+  workflow_dispatch: # Allow manual runs
+
+jobs:
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: checkle:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Test Docker Image
+        run: |
+          docker run --rm checkle:latest --version
+          
+          # Test basic hashing functionality
+          echo "test content" > test.txt
+          docker run --rm -v $(pwd):/data checkle:latest hash /data/test.txt
+          
+          # Clean up
+          rm test.txt
+      
+      # Optional: Build multi-platform images (uncomment if needed)
+      # - name: Build Multi-Platform
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: .
+      #     platforms: linux/amd64,linux/arm64
+      #     push: false
+      #     tags: checkle:multi-platform
