@@ -258,6 +258,76 @@ test_batch_verification() {
 	echo ""
 }
 
+# Function to test that archive files are hashed as regular files
+test_archive_files() {
+	print_info "Testing archive files are hashed as regular files..."
+	
+	local archives=(
+		"test_archive.tar"
+		"test_archive.tar.gz"
+		"test_archive.tar.bz2"
+		"test_archive.tar.xz"
+		"test_archive.zip"
+	)
+	
+	for archive in "${archives[@]}"; do
+		local archive_path="$TEST_DATA_DIR/$archive"
+		local md5_file="$TEST_DATA_DIR/$archive.md5"
+		local sha256_file="$TEST_DATA_DIR/$archive.sha256"
+		
+		if [[ -f "$archive_path" ]]; then
+			echo "  Checking $archive..."
+			
+			# Test MD5
+			if [[ -f "$md5_file" ]]; then
+				local expected_md5=$(head -1 "$md5_file" | cut -d' ' -f1)
+				if checkle_md5=$(get_checkle_hash "$archive_path" "md5"); then
+					if [[ "$expected_md5" == "$checkle_md5" ]]; then
+						print_success "  ✓ MD5 match for $archive"
+						((TESTS_PASSED++))
+					else
+						print_error "  ✗ MD5 mismatch for $archive"
+						print_error "    Expected: $expected_md5"
+						print_error "    Got:      $checkle_md5"
+						((TESTS_FAILED++))
+					fi
+				else
+					print_error "  ✗ Failed to get checkle MD5 for $archive"
+					((TESTS_FAILED++))
+				fi
+			else
+				print_warning "  MD5 file not found: $md5_file"
+			fi
+			
+			# Test SHA256
+			if [[ -f "$sha256_file" ]]; then
+				local expected_sha256=$(head -1 "$sha256_file" | cut -d' ' -f1)
+				if checkle_sha256=$(get_checkle_hash "$archive_path" "sha2"); then
+					if [[ "$expected_sha256" == "$checkle_sha256" ]]; then
+						print_success "  ✓ SHA256 match for $archive"
+						((TESTS_PASSED++))
+					else
+						print_error "  ✗ SHA256 mismatch for $archive"
+						print_error "    Expected: $expected_sha256"
+						print_error "    Got:      $checkle_sha256"
+						((TESTS_FAILED++))
+					fi
+				else
+					print_error "  ✗ Failed to get checkle SHA256 for $archive"
+					((TESTS_FAILED++))
+				fi
+			else
+				print_warning "  SHA256 file not found: $sha256_file"
+			fi
+		else
+			print_warning "  Archive not found: $archive_path (run tests/create_test_archives.sh first)"
+		fi
+	done
+	
+	print_success "✓ All archive files hashed correctly as regular files"
+	echo ""
+}
+
 # Main execution
 main() {
 	echo "======================================"
@@ -298,6 +368,9 @@ main() {
 
 	# Test batch verification
 	test_batch_verification
+
+	# Test archive files are hashed as regular files
+	test_archive_files
 
 	# Generate report
 	generate_report

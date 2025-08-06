@@ -1114,6 +1114,88 @@ mod tar_impl {
         }
     }
 
+    /// Opens a TAR archive with transparent decompression based on file extension.
+    ///
+    /// This function detects the compression format from the file extension and
+    /// automatically applies the appropriate decompressor. This fixes the critical
+    /// bug where compressed TAR archives were being read as raw bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the TAR archive (may be compressed)
+    ///
+    /// # Returns
+    ///
+    /// A boxed `Read` trait object that transparently decompresses the archive
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened
+    fn open_tar_with_decompression(path: &Path) -> Result<Box<dyn Read>> {
+        // Precondition assertions (Tiger Style)
+        assert!(path.exists(), "Archive path must exist");
+        assert!(path.is_file(), "Archive path must be a file");
+
+        let file = File::open(path).map_err(|e| CheckleError::FileOpenError {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
+
+        // Detect compression from file extension
+        let path_str = path.to_string_lossy();
+
+        // Check for gzip compression
+        if path_str.ends_with(".tar.gz") || path_str.ends_with(".tgz") {
+            #[cfg(feature = "flate2")]
+            {
+                use flate2::read::GzDecoder;
+                return Ok(Box::new(GzDecoder::new(file)));
+            }
+
+            #[cfg(not(feature = "flate2"))]
+            return Err(CheckleError::UnsupportedArchiveFormat {
+                path: path.to_path_buf(),
+                format: "gzip-compressed TAR (install with flate2 feature)".to_string(),
+            });
+        }
+
+        // Check for bzip2 compression
+        if path_str.ends_with(".tar.bz2")
+            || path_str.ends_with(".tbz2")
+            || path_str.ends_with(".tbz")
+        {
+            #[cfg(feature = "bzip2")]
+            {
+                use bzip2::read::BzDecoder;
+                return Ok(Box::new(BzDecoder::new(file)));
+            }
+
+            #[cfg(not(feature = "bzip2"))]
+            return Err(CheckleError::UnsupportedArchiveFormat {
+                path: path.to_path_buf(),
+                format: "bzip2-compressed TAR (install with bzip2 feature)".to_string(),
+            });
+        }
+
+        // Check for xz compression
+        if path_str.ends_with(".tar.xz") || path_str.ends_with(".txz") {
+            #[cfg(feature = "xz2")]
+            {
+                use xz2::read::XzDecoder;
+                return Ok(Box::new(XzDecoder::new(file)));
+            }
+
+            #[cfg(not(feature = "xz2"))]
+            return Err(CheckleError::UnsupportedArchiveFormat {
+                path: path.to_path_buf(),
+                format: "xz-compressed TAR (install with xz2 feature)".to_string(),
+            });
+        }
+
+        // No compression detected, return raw file
+        Ok(Box::new(file))
+    }
+
     /// TAR archive implementation.
     pub struct TarArchive {
         path: PathBuf,
@@ -1179,12 +1261,9 @@ mod tar_impl {
             assert!(self.path.exists(), "Archive path must exist");
             assert!(self.path.is_file(), "Archive path must be a file");
 
-            let file = File::open(&self.path).map_err(|e| CheckleError::FileOpenError {
-                path: self.path.clone(),
-                source: e,
-            })?;
-
-            let mut archive = TarArchiveInner::new(file);
+            // Use decompression wrapper to handle compressed archives
+            let reader = open_tar_with_decompression(&self.path)?;
+            let mut archive = TarArchiveInner::new(reader);
             let mut entries = archive
                 .entries()
                 .map_err(|e| CheckleError::CorruptedArchive {
@@ -1290,12 +1369,9 @@ mod tar_impl {
             assert!(!internal_path.is_empty(), "Internal path must not be empty");
             assert!(self.path.exists(), "Archive must exist");
 
-            let file = File::open(&self.path).map_err(|e| CheckleError::FileOpenError {
-                path: self.path.clone(),
-                source: e,
-            })?;
-
-            let mut archive = TarArchiveInner::new(file);
+            // Use decompression wrapper to handle compressed archives
+            let reader = open_tar_with_decompression(&self.path)?;
+            let mut archive = TarArchiveInner::new(reader);
 
             // Find the entry
             for entry in archive
@@ -1360,12 +1436,9 @@ mod tar_impl {
             assert!(self.path.exists(), "Archive must exist");
             assert!(self.path.is_file(), "Archive must be a file");
 
-            let file = File::open(&self.path).map_err(|e| CheckleError::FileOpenError {
-                path: self.path.clone(),
-                source: e,
-            })?;
-
-            let mut archive = TarArchiveInner::new(file);
+            // Use decompression wrapper to handle compressed archives
+            let reader = open_tar_with_decompression(&self.path)?;
+            let mut archive = TarArchiveInner::new(reader);
             let mut entries = Vec::new();
 
             for entry in archive
@@ -1495,12 +1568,9 @@ mod tar_impl {
             assert!(self.path.exists(), "Archive must exist");
             assert!(self.path.is_file(), "Archive must be a file");
 
-            let file = File::open(&self.path).map_err(|e| CheckleError::FileOpenError {
-                path: self.path.clone(),
-                source: e,
-            })?;
-
-            let mut archive = TarArchiveInner::new(file);
+            // Use decompression wrapper to handle compressed archives
+            let reader = open_tar_with_decompression(&self.path)?;
+            let mut archive = TarArchiveInner::new(reader);
             let mut entries = Vec::new();
 
             for (index, entry_result) in archive
@@ -1546,9 +1616,9 @@ mod tar_impl {
         /// # Returns
         ///
         /// Result containing the processed entry data.
-        fn process_tar_entry(
+        fn process_tar_entry<R: Read>(
             &self,
-            entry_result: std::result::Result<tar::Entry<File>, std::io::Error>,
+            entry_result: std::result::Result<tar::Entry<R>, std::io::Error>,
             index: usize,
         ) -> Result<(String, TarEntryReader, ArchiveEntryMetadata)> {
             // Precondition assertions (Tiger Style: minimum 2 per function)

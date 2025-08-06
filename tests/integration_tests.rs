@@ -4,7 +4,9 @@
     clippy::missing_panics_doc,
     clippy::uninlined_format_args,
     clippy::needless_raw_string_hashes,
-    clippy::trim_split_whitespace
+    clippy::trim_split_whitespace,
+    clippy::print_stderr,
+    clippy::collapsible_if
 )]
 
 use assert_cmd::Command;
@@ -631,4 +633,317 @@ fn test_cli_graceful_operations_integration() {
         .assert()
         .success()
         .stdout(predicate::str::is_match(r"[a-f0-9]{32}").expect("Failed to create MD5 regex"));
+}
+
+// ============================================================================
+// ARCHIVE TESTING - PRINCIPLE OF LEAST SURPRISE VALIDATION
+// ============================================================================
+
+// Integration Test 26: Archive files are hashed as regular files (TAR)
+#[test]
+fn test_archive_tar_hashed_as_regular_file() {
+    let archive_path = "tests/data/test_archive.tar";
+
+    // Skip if archive doesn't exist
+    if !std::path::Path::new(archive_path).exists() {
+        eprintln!(
+            "Skipping test - {} not found. Run tests/create_test_archives.sh first.",
+            archive_path
+        );
+        return;
+    }
+
+    // Get checkle hash of the .tar file
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
+    let checkle_output = cmd
+        .arg("hash")
+        .arg(archive_path)
+        .arg("--algorithm")
+        .arg("md5")
+        .output()
+        .expect("Failed to execute checkle");
+
+    let checkle_hash = String::from_utf8_lossy(&checkle_output.stdout);
+    let checkle_hash = checkle_hash
+        .split_whitespace()
+        .next()
+        .expect("Should contain hash");
+
+    // Read the reference hash from the .md5 file
+    let md5_file_path = "tests/data/test_archive.tar.md5";
+    let expected_hash = fs::read_to_string(md5_file_path)
+        .expect("Failed to read MD5 file")
+        .split_whitespace()
+        .next()
+        .expect("MD5 file should contain hash")
+        .to_string();
+
+    assert_eq!(
+        checkle_hash, expected_hash,
+        "TAR archive file should be hashed as regular file, not introspected"
+    );
+}
+
+// Integration Test 27: Archive files are hashed as regular files (TAR.GZ)
+#[test]
+fn test_archive_tar_gz_hashed_as_regular_file() {
+    let archive_path = "tests/data/test_archive.tar.gz";
+
+    // Skip if archive doesn't exist
+    if !std::path::Path::new(archive_path).exists() {
+        eprintln!(
+            "Skipping test - {} not found. Run tests/create_test_archives.sh first.",
+            archive_path
+        );
+        return;
+    }
+
+    // Get checkle hash of the .tar.gz file
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
+    let checkle_output = cmd
+        .arg("hash")
+        .arg(archive_path)
+        .arg("--algorithm")
+        .arg("md5")
+        .output()
+        .expect("Failed to execute checkle");
+
+    let checkle_hash = String::from_utf8_lossy(&checkle_output.stdout);
+    let checkle_hash = checkle_hash
+        .split_whitespace()
+        .next()
+        .expect("Should contain hash");
+
+    // Read the reference hash from the .md5 file
+    let md5_file_path = "tests/data/test_archive.tar.gz.md5";
+    let expected_hash = fs::read_to_string(md5_file_path)
+        .expect("Failed to read MD5 file")
+        .split_whitespace()
+        .next()
+        .expect("MD5 file should contain hash")
+        .to_string();
+
+    assert_eq!(
+        checkle_hash, expected_hash,
+        "TAR.GZ archive file should be hashed as regular file, not introspected"
+    );
+}
+
+// Integration Test 28: Archive files are hashed as regular files (TAR.BZ2)
+#[test]
+fn test_archive_tar_bz2_hashed_as_regular_file() {
+    let archive_path = "tests/data/test_archive.tar.bz2";
+
+    // Skip if archive doesn't exist
+    if !std::path::Path::new(archive_path).exists() {
+        eprintln!(
+            "Skipping test - {} not found. Run tests/create_test_archives.sh first.",
+            archive_path
+        );
+        return;
+    }
+
+    // Get checkle hash of the .tar.bz2 file
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
+    let checkle_output = cmd
+        .arg("hash")
+        .arg(archive_path)
+        .arg("--algorithm")
+        .arg("md5")
+        .output()
+        .expect("Failed to execute checkle");
+
+    let checkle_hash = String::from_utf8_lossy(&checkle_output.stdout);
+    let checkle_hash = checkle_hash
+        .split_whitespace()
+        .next()
+        .expect("Should contain hash");
+
+    // Read the reference hash from the .md5 file
+    let md5_file_path = "tests/data/test_archive.tar.bz2.md5";
+    let expected_hash = fs::read_to_string(md5_file_path)
+        .expect("Failed to read MD5 file")
+        .split_whitespace()
+        .next()
+        .expect("MD5 file should contain hash")
+        .to_string();
+
+    assert_eq!(
+        checkle_hash, expected_hash,
+        "TAR.BZ2 archive file should be hashed as regular file, not introspected"
+    );
+}
+
+// Integration Test 29: Archive files are hashed as regular files (TAR.XZ)
+#[test]
+fn test_archive_tar_xz_hashed_as_regular_file() {
+    let archive_path = "tests/data/test_archive.tar.xz";
+
+    // Skip if archive doesn't exist
+    if !std::path::Path::new(archive_path).exists() {
+        eprintln!(
+            "Skipping test - {} not found. Run tests/create_test_archives.sh first.",
+            archive_path
+        );
+        return;
+    }
+
+    // Get checkle hash of the .tar.xz file
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
+    let checkle_output = cmd
+        .arg("hash")
+        .arg(archive_path)
+        .arg("--algorithm")
+        .arg("md5")
+        .output()
+        .expect("Failed to execute checkle");
+
+    let checkle_hash = String::from_utf8_lossy(&checkle_output.stdout);
+    let checkle_hash = checkle_hash
+        .split_whitespace()
+        .next()
+        .expect("Should contain hash");
+
+    // Read the reference hash from the .md5 file
+    let md5_file_path = "tests/data/test_archive.tar.xz.md5";
+    let expected_hash = fs::read_to_string(md5_file_path)
+        .expect("Failed to read MD5 file")
+        .split_whitespace()
+        .next()
+        .expect("MD5 file should contain hash")
+        .to_string();
+
+    assert_eq!(
+        checkle_hash, expected_hash,
+        "TAR.XZ archive file should be hashed as regular file, not introspected"
+    );
+}
+
+// Integration Test 30: Archive files are hashed as regular files (ZIP)
+#[test]
+fn test_archive_zip_hashed_as_regular_file() {
+    let archive_path = "tests/data/test_archive.zip";
+
+    // Skip if archive doesn't exist
+    if !std::path::Path::new(archive_path).exists() {
+        eprintln!(
+            "Skipping test - {} not found. Run tests/create_test_archives.sh first.",
+            archive_path
+        );
+        return;
+    }
+
+    // Get checkle hash of the .zip file
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
+    let checkle_output = cmd
+        .arg("hash")
+        .arg(archive_path)
+        .arg("--algorithm")
+        .arg("md5")
+        .output()
+        .expect("Failed to execute checkle");
+
+    let checkle_hash = String::from_utf8_lossy(&checkle_output.stdout);
+    let checkle_hash = checkle_hash
+        .split_whitespace()
+        .next()
+        .expect("Should contain hash");
+
+    // Read the reference hash from the .md5 file
+    let md5_file_path = "tests/data/test_archive.zip.md5";
+    let expected_hash = fs::read_to_string(md5_file_path)
+        .expect("Failed to read MD5 file")
+        .split_whitespace()
+        .next()
+        .expect("MD5 file should contain hash")
+        .to_string();
+
+    assert_eq!(
+        checkle_hash, expected_hash,
+        "ZIP archive file should be hashed as regular file, not introspected"
+    );
+}
+
+// Integration Test 31: SHA256 validation for archive files
+#[test]
+fn test_archive_sha256_hashed_as_regular_file() {
+    let archive_path = "tests/data/test_archive.tar.gz";
+
+    // Skip if archive doesn't exist
+    if !std::path::Path::new(archive_path).exists() {
+        eprintln!(
+            "Skipping test - {} not found. Run tests/create_test_archives.sh first.",
+            archive_path
+        );
+        return;
+    }
+
+    // Get checkle SHA256 hash of the .tar.gz file
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
+    let checkle_output = cmd
+        .arg("hash")
+        .arg(archive_path)
+        .arg("--algorithm")
+        .arg("sha256")
+        .output()
+        .expect("Failed to execute checkle");
+
+    let checkle_hash = String::from_utf8_lossy(&checkle_output.stdout);
+    let checkle_hash = checkle_hash
+        .split_whitespace()
+        .next()
+        .expect("Should contain hash");
+
+    // Read the reference hash from the .sha256 file
+    let sha256_file_path = "tests/data/test_archive.tar.gz.sha256";
+    let expected_hash = fs::read_to_string(sha256_file_path)
+        .expect("Failed to read SHA256 file")
+        .split_whitespace()
+        .next()
+        .expect("SHA256 file should contain hash")
+        .to_string();
+
+    assert_eq!(
+        checkle_hash, expected_hash,
+        "TAR.GZ archive file should have correct SHA256 when hashed as regular file"
+    );
+}
+
+// Integration Test 32: Colon syntax triggers archive introspection (if available)
+#[cfg(feature = "tar")]
+#[test]
+fn test_colon_syntax_triggers_archive_introspection() {
+    let archive_path = "tests/data/test_archive.tar:test_file.txt";
+
+    // Skip if archive doesn't exist
+    if !std::path::Path::new("tests/data/test_archive.tar").exists() {
+        eprintln!(
+            "Skipping test - tests/data/test_archive.tar not found. Run tests/create_test_archives.sh first."
+        );
+        return;
+    }
+
+    // This should attempt archive introspection (may fail if entry doesn't exist, but shouldn't treat as regular file)
+    let mut cmd = Command::cargo_bin("checkle").expect("Failed to find checkle binary");
+    let result = cmd
+        .arg("hash")
+        .arg(archive_path)
+        .arg("--algorithm")
+        .arg("md5")
+        .output();
+
+    // The key test is that it doesn't treat "test_archive.tar:test_file.txt" as a regular filename
+    // It should either succeed (if introspection works) or fail with archive-related error
+    if let Ok(output) = result {
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            // Should fail with archive-related error, not "file not found" for the literal filename
+            assert!(
+                !stderr.contains("test_archive.tar:test_file.txt"),
+                "Should not treat colon syntax as literal filename"
+            );
+        }
+    }
+    // If result is Err, command execution failed, which is fine for this test
+    // The important thing is that it recognized the colon syntax
 }

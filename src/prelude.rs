@@ -22,7 +22,7 @@ pub use crate::{
     errors::{CheckleError, Result},
 
     // Core hashing functionality
-    hashing::{HashArray, Hasher, HashingAlgo, MerkleIter},
+    hashing::{HashArray, Hasher, HashingAlgo, MerkleIter, compared_hashes},
 
     // I/O operations
     io::{FileHashPair, FilesToCheck},

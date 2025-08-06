@@ -1,9 +1,5 @@
 #![allow(clippy::print_stdout)]
 
-#[cfg(feature = "tar")]
-use crate::archive::TarArchive;
-#[cfg(feature = "zip")]
-use crate::archive::ZipArchive;
 use crate::{
     archive_path,
     cli::{AbsolutePaths, NoIgnore, NoProgress, OutputFormat, PerFileMode, PrettyPrint, Recursive},
@@ -13,7 +9,7 @@ use crate::{
     prettyprint::{FileHashPairWithMetadata, convert_to_basic_pairs, display_pretty_table},
     progress::ProgressManager,
 };
-use log::{debug, error, info, warn};
+use log::{debug, info};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     fmt::Write as FmtWrite,
@@ -171,22 +167,13 @@ impl HashConfig<'_> {
             max_files_batch: self.max_files_batch,
         };
 
-        // Check for archive traversal: --recursive with an archive file (not archive path)
+        // Check if input_file is an archive path (contains ':') - if so, handle it as archive introspection
         let input_file_str = self.input_file.to_string_lossy();
-        if self.recursive && archive_path::parse_archive_path(&input_file_str).is_none() {
-            // Check if input_file is an archive file itself (not an archive path)
-            if is_archive_file(self.input_file) {
-                // Archive traversal - hash all entries in the archive
-                return self.hash_archive_entries();
-            }
-        }
-
-        // Check if input_file is an archive path - if so, handle it as a single entry hash
         if let Some(_archive_components) = archive_path::parse_archive_path(&input_file_str) {
             return self.hash_single_archive_entry();
         }
 
-        // Regular file/directory hashing
+        // Regular file/directory hashing (archives are treated as regular files unless ':' syntax is used)
         self.hash_regular_files(&filter_config)
     }
 
@@ -380,21 +367,6 @@ impl HashConfig<'_> {
             self.algo,
         )
     }
-
-    /// Hash all entries in an archive file.
-    fn hash_archive_entries(&self) -> Result<()> {
-        hash_archive_entries(
-            self.input_file,
-            self.chunk_size_kb,
-            self.parallel_readers,
-            self.algo,
-            self.per_file,
-            self.hash_output,
-            self.format,
-            self.pretty,
-            self.absolute_paths,
-        )
-    }
 }
 
 /// Handle output of hash results.
@@ -507,323 +479,6 @@ fn is_wildcard_pattern(path: &Path) -> bool {
         || path == Path::new("./*")
         || path == Path::new("./")
         || path == Path::new(".")
-}
-
-/// Check if a file path represents an archive file based on extension.
-#[inline]
-fn is_archive_file(path: &Path) -> bool {
-    let path_str = path.to_string_lossy().to_lowercase();
-
-    #[cfg(feature = "tar")]
-    if path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("tar"))
-        || path_str.contains(".tar.")
-        || path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("tgz"))
-    {
-        return true;
-    }
-
-    #[cfg(feature = "zip")]
-    if path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
-    {
-        return true;
-    }
-
-    false
-}
-
-/// Configuration for hashing archive entries.
-struct ArchiveHashConfig<'a> {
-    archive_path: &'a Path,
-    chunk_size_kb: usize,
-    parallel_readers: usize,
-    algo: HashingAlgo,
-    per_file: PerFileMode,
-    hash_output: Option<&'a Path>,
-    format: Option<OutputFormat>,
-    pretty: PrettyPrint,
-    absolute_paths: AbsolutePaths,
-}
-
-/// Hash all entries in an archive file.
-// TODO: Remove this function once all callers use ArchiveHashConfig directly
-#[allow(clippy::too_many_arguments)]
-fn hash_archive_entries(
-    archive_path: &Path,
-    chunk_size_kb: usize,
-    parallel_readers: usize,
-    algo: HashingAlgo,
-    per_file: PerFileMode,
-    hash_output: Option<&Path>,
-    format: Option<OutputFormat>,
-    pretty: PrettyPrint,
-    absolute_paths: AbsolutePaths,
-) -> Result<()> {
-    let config = ArchiveHashConfig {
-        archive_path,
-        chunk_size_kb,
-        parallel_readers,
-        algo,
-        per_file,
-        hash_output,
-        format,
-        pretty,
-        absolute_paths,
-    };
-    config.hash_entries()
-}
-
-impl ArchiveHashConfig<'_> {
-    fn hash_entries(&self) -> Result<()> {
-        // Determine archive type and create reader
-        let archive_path_str = self.archive_path.to_string_lossy().to_lowercase();
-
-        #[cfg(feature = "tar")]
-        if self
-            .archive_path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("tar"))
-            || archive_path_str.contains(".tar.")
-            || self
-                .archive_path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("tgz"))
-        {
-            return self.hash_tar_entries();
-        }
-
-        #[cfg(feature = "zip")]
-        if self
-            .archive_path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
-        {
-            return self.hash_zip_entries();
-        }
-
-        Err(CheckleError::UnsupportedArchiveFormat(
-            self.archive_path.to_path_buf(),
-        ))
-    }
-
-    #[cfg(feature = "tar")]
-    fn hash_tar_entries(&self) -> Result<()> {
-        let mut archive = TarArchive::open(self.archive_path)?;
-        let entry_count = archive.entry_count()?;
-
-        // Create progress manager
-        let show_progress = true; // Always show progress for archive traversal
-        let progress_manager = ProgressManager::new(show_progress, entry_count);
-
-        // Get all archive entries first
-        let entries = archive.list_entries()?;
-        let mut archive_entries = Vec::new();
-
-        // Collect all entry paths
-        for entry_path in entries {
-            // Create archive path syntax: archive.tar:internal/path
-            let full_path = format!("{}:{}", self.archive_path.display(), entry_path);
-            archive_entries.push(PathBuf::from(full_path));
-        }
-
-        // Now process all entries in parallel using DataSource
-        hash_archive_entry_paths(
-            archive_entries,
-            self.chunk_size_kb,
-            self.parallel_readers,
-            self.algo,
-            self.per_file,
-            self.hash_output,
-            self.format,
-            self.pretty,
-            &progress_manager,
-            self.absolute_paths,
-        )
-    }
-
-    #[cfg(feature = "zip")]
-    fn hash_zip_entries(&self) -> Result<()> {
-        let mut archive = ZipArchive::open(self.archive_path)?;
-        let entry_count = archive.entry_count();
-
-        // Create progress manager
-        let show_progress = true; // Always show progress for archive traversal
-        let progress_manager = ProgressManager::new(show_progress, entry_count);
-
-        // Get all archive entries first
-        let entries = archive.list_entries()?;
-        let mut archive_entries = Vec::new();
-
-        // Collect all entry paths
-        for entry_path in entries {
-            // Create archive path syntax: archive.zip:internal/path
-            let full_path = format!("{}:{}", self.archive_path.display(), entry_path);
-            archive_entries.push(PathBuf::from(full_path));
-        }
-
-        // Now process all entries in parallel using DataSource
-        hash_archive_entry_paths(
-            archive_entries,
-            self.chunk_size_kb,
-            self.parallel_readers,
-            self.algo,
-            self.per_file,
-            self.hash_output,
-            self.format,
-            self.pretty,
-            &progress_manager,
-            self.absolute_paths,
-        )
-    }
-}
-
-struct ArchiveEntryHashConfig<'a> {
-    archive_entries: Vec<PathBuf>,
-    chunk_size_kb: usize,
-    parallel_readers: usize,
-    algo: HashingAlgo,
-    per_file: bool,
-    hash_output: Option<&'a Path>,
-    format: Option<OutputFormat>,
-    pretty: bool,
-    progress_manager: &'a ProgressManager,
-    absolute_paths: AbsolutePaths,
-}
-
-// TODO: Remove this function once all callers use ArchiveEntryHashConfig directly
-#[allow(clippy::too_many_arguments)]
-fn hash_archive_entry_paths(
-    archive_entries: Vec<PathBuf>,
-    chunk_size_kb: usize,
-    parallel_readers: usize,
-    algo: HashingAlgo,
-    per_file: PerFileMode,
-    hash_output: Option<&Path>,
-    format: Option<OutputFormat>,
-    pretty: PrettyPrint,
-    progress_manager: &ProgressManager,
-    absolute_paths: AbsolutePaths,
-) -> Result<()> {
-    let config = ArchiveEntryHashConfig {
-        archive_entries,
-        chunk_size_kb,
-        parallel_readers,
-        algo,
-        per_file,
-        hash_output,
-        format,
-        pretty,
-        progress_manager,
-        absolute_paths,
-    };
-    config.hash_entries()
-}
-
-impl ArchiveEntryHashConfig<'_> {
-    #[allow(clippy::print_stdout)]
-    fn hash_entries(self) -> Result<()> {
-        // Clone necessary values for use in parallel iterator
-        let progress_manager_clone = self.progress_manager.clone();
-        let chunk_size_kb = self.chunk_size_kb;
-        let parallel_readers = self.parallel_readers;
-        let algo_clone = self.algo;
-
-        let file_hash_pairs = self
-            .archive_entries
-            .into_par_iter()
-            .map(move |entry_path| -> Result<FileHashPairWithMetadata> {
-                // Create DataSource for this archive entry
-                let source = create_data_source_from_path(&entry_path)?;
-
-                // Extract chunk_size and parallel_readers as we did before
-                let chunk_size_kb_u16 = if chunk_size_kb == 0 {
-                    0
-                } else {
-                    u16::try_from(chunk_size_kb).unwrap_or(1024) // Default to 1024 if too large
-                };
-
-                let hash = source.hash(
-                    algo_clone,
-                    chunk_size_kb_u16,
-                    parallel_readers,
-                    None::<fn(u64)>,
-                )?;
-
-                // For archive entries, we use fallback metadata since there's no filesystem file
-                let result = FileHashPairWithMetadata::new_with_fallback(entry_path, hash)?;
-
-                // Update progress
-                progress_manager_clone.inc_overall();
-
-                Ok(result)
-            })
-            .collect::<Vec<_>>();
-
-        // Handle results and errors
-        let mut successful_results = Vec::new();
-        let mut error_count = 0;
-
-        for result in file_hash_pairs {
-            match result {
-                Ok(file_hash_pair) => {
-                    successful_results.push(file_hash_pair);
-                }
-                Err(e) => {
-                    error!("Error hashing archive entry: {e}");
-                    error_count += 1;
-                }
-            }
-        }
-
-        if successful_results.is_empty() {
-            return Err(CheckleError::MultipleFailedChecksums);
-        }
-
-        if error_count > 0 {
-            warn!("Failed to hash {error_count} archive entries");
-        }
-
-        // Handle output (same as regular hash command)
-        if self.per_file {
-            for result in &successful_results {
-                write_per_file_hash(result.file(), result.hash(), self.algo)?;
-            }
-        } else if let Some(output_path) = self.hash_output {
-            let output_format = self.format.unwrap_or(OutputFormat::Text);
-            let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
-            let formatted_output = format_output_with_pretty(
-                &convert_to_basic_pairs(successful_results),
-                output_format,
-                self.pretty,
-                path_mode,
-            );
-            std::fs::write(output_path, formatted_output).map_err(|e| {
-                CheckleError::FileOpenError {
-                    path: output_path.to_path_buf(),
-                    source: e,
-                }
-            })?;
-        } else if self.pretty {
-            display_pretty_table(&successful_results)?;
-        } else {
-            let output_format = self.format.unwrap_or(OutputFormat::Text);
-            let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
-            let formatted_output = format_output_with_pretty(
-                &convert_to_basic_pairs(successful_results),
-                output_format,
-                false,
-                path_mode,
-            );
-            println!("{formatted_output}");
-        }
-
-        Ok(())
-    }
 }
 
 /// Create a `DataSource` from a path that might contain archive syntax.
@@ -1000,4 +655,133 @@ fn escape_json_string(input: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// Test that .tar.gz files are hashed as regular files (not introspected) when no colon is present.
+    #[test]
+    fn test_naive_tar_gz_hashing() {
+        // Create a temporary .tar.gz file
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let tar_gz_path = temp_dir.path().join("test.tar.gz");
+
+        // Create some test content in the tar.gz file
+        let test_content = b"test tar gz content for hashing";
+        fs::write(&tar_gz_path, test_content).expect("Failed to write tar.gz file");
+
+        // Create HashConfig to hash the .tar.gz file as a regular file
+        let config = HashConfig {
+            input_file: &tar_gz_path,
+            recursive: false,
+            hash_output: None,
+            format: None,
+            pretty: false,
+            per_file: false,
+            no_progress: true,
+            include: &[],
+            exclude: &[],
+            no_ignore: false,
+            algo: HashingAlgo::Md5,
+            chunk_size_kb: 1024,
+            parallel_readers: 1,
+            max_files_batch: 1000,
+            absolute_paths: false,
+        };
+
+        // The hash should succeed and treat the .tar.gz as a regular file
+        let result = config.execute_hash();
+        assert!(result.is_ok(), "Should hash .tar.gz file as regular file");
+
+        // Verify that no archive introspection occurred by checking no colon was detected
+        assert!(
+            archive_path::parse_archive_path(&tar_gz_path.to_string_lossy()).is_none(),
+            "Should not detect archive path syntax without colon"
+        );
+    }
+
+    /// Test that .zip files are hashed as regular files (not introspected) when no colon is present.
+    #[test]
+    fn test_naive_zip_hashing() {
+        // Create a temporary .zip file
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let zip_path = temp_dir.path().join("test.zip");
+
+        // Create some test content in the zip file
+        let test_content = b"test zip content for hashing";
+        fs::write(&zip_path, test_content).expect("Failed to write zip file");
+
+        // Create HashConfig to hash the .zip file as a regular file
+        let config = HashConfig {
+            input_file: &zip_path,
+            recursive: false,
+            hash_output: None,
+            format: None,
+            pretty: false,
+            per_file: false,
+            no_progress: true,
+            include: &[],
+            exclude: &[],
+            no_ignore: false,
+            algo: HashingAlgo::Md5,
+            chunk_size_kb: 1024,
+            parallel_readers: 1,
+            max_files_batch: 1000,
+            absolute_paths: false,
+        };
+
+        // The hash should succeed and treat the .zip as a regular file
+        let result = config.execute_hash();
+        assert!(result.is_ok(), "Should hash .zip file as regular file");
+
+        // Verify that no archive introspection occurred
+        assert!(
+            archive_path::parse_archive_path(&zip_path.to_string_lossy()).is_none(),
+            "Should not detect archive path syntax without colon"
+        );
+    }
+
+    /// Test that colon syntax triggers archive introspection.
+    #[test]
+    fn test_colon_triggers_introspection() {
+        // Test that a path with colon syntax is detected as archive path
+        let archive_path_str = "test.tar.gz:internal/file.txt";
+        let components = archive_path::parse_archive_path(archive_path_str);
+        assert!(
+            components.is_some(),
+            "Should detect archive path with colon syntax"
+        );
+
+        let components = components.expect("Archive components should exist");
+        assert_eq!(components.archive().to_string_lossy(), "test.tar.gz");
+        assert_eq!(components.entry(), "internal/file.txt");
+
+        // Test ZIP archive path
+        let zip_archive_path = "data.zip:output/results.csv";
+        let zip_components = archive_path::parse_archive_path(zip_archive_path);
+        assert!(
+            zip_components.is_some(),
+            "Should detect ZIP archive path with colon syntax"
+        );
+
+        let zip_components = zip_components.expect("ZIP archive components should exist");
+        assert_eq!(zip_components.archive().to_string_lossy(), "data.zip");
+        assert_eq!(zip_components.entry(), "output/results.csv");
+
+        // Test that regular paths without colon are not detected as archive paths
+        assert!(
+            archive_path::parse_archive_path("regular_file.txt").is_none(),
+            "Should not detect regular file as archive path"
+        );
+        assert!(
+            archive_path::parse_archive_path("test.tar.gz").is_none(),
+            "Should not detect archive file without colon as archive path"
+        );
+    }
 }

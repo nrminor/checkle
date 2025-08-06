@@ -1,7 +1,7 @@
 # AGENTS.md - Comprehensive AI Assistant Instructions for checkle
 
-This document consolidates all AI assistant instructions for the checkle
-project into a single comprehensive reference.
+This document consolidates all AI assistant instructions for the checkle project
+into a single comprehensive reference.
 
 ## MANDATORY FIRST STEP: Document Review
 
@@ -19,6 +19,58 @@ understand ALL of the following documents:
 **Work performed without reviewing these documents is UNACCEPTABLE.** These
 documents contain essential information about project goals, coding standards,
 and architectural decisions.
+
+## Core Values and Project Spirit
+
+### 1. Correctness is Sacred
+
+This project handles terabyte-scale genomics data where a single wrong hash
+could invalidate months of research or waste $10,000+ in sequencing costs.
+Silent corruption is the ultimate betrayal of user trust and represents a
+catastrophic failure of our core mission.
+
+**Contributors MUST:**
+
+- Test against standard tools (`md5sum`, `sha256sum`) religiously
+- Never trust that code "looks right" - verify with `just verify-hashes`
+- Understand that in bioinformatics, data integrity failures can have
+  career-ending consequences
+- Treat any bug that produces incorrect hashes as a CRITICAL emergency
+
+**The Sacred Commandment**: A wrong hash is worse than a crash.
+
+### 2. The Entropy Tax is Real
+
+Every line added must pay rent. Code that doesn't earn its keep through clear
+value delivery is technical debt that compounds over time. The archive
+implementation that added 3,000+ lines for a feature that produces wrong results
+is a cautionary tale of catastrophic negative value.
+
+**Contributors MUST:**
+
+- Question if a feature is worth its maintenance burden
+- Delete code aggressively when refactoring
+- Follow Grug Brain: "Complexity very, very bad"
+- Measure value delivered against entropy introduced
+
+**The Entropy Equation**: Value ÷ Complexity = Worth. If this ratio is less than
+1, the code should not exist.
+
+### 3. Performance is a Feature, Not an Optimization
+
+In bioinformatics, waiting 6 hours vs 30 minutes for checksums can be the
+difference between meeting a grant deadline or missing it. Our Merkle tree
+design wasn't premature optimization—it's our core value proposition.
+
+**Contributors MUST:**
+
+- Design for terabyte scale from the start
+- Never introduce changes that break multicore parallelization
+- Benchmark with real genomics files (hundreds of GB)
+- Consider I/O patterns and memory usage at scale
+
+**The Performance Promise**: checkle must remain faster than traditional tools
+on multicore systems, or it has no reason to exist.
 
 ## Project: checkle
 
@@ -101,31 +153,40 @@ ready for review without FIRST running:**
 - `clippy::unwrap_used`
 
 **NO EXCEPTIONS.** Any claim of completion without these checks is unacceptable.
+Clippy lints aren't suggestions, they're requirements
 
 ### Lint Allowance Rule (NON-NEGOTIABLE)
 
-**CRITICAL**: It is ABSOLUTELY FORBIDDEN to add any `#[allow()]` lint suppressions without explicit permission from the project maintainer. This includes but is not limited to:
+**CRITICAL**: It is ABSOLUTELY FORBIDDEN to add any `#[allow()]` lint
+suppressions without explicit permission from the project maintainer. This
+includes but is not limited to:
 
 - `#[allow(clippy::...)]`
 - `#[allow(dead_code)]`
-- `#[allow(unused_variables)]` 
+- `#[allow(unused_variables)]`
 - `#[allow(unused_imports)]`
 - Any other lint suppression directive
 
-**RATIONALE**: This codebase's safety net depends on defaulting to opt-out for lint rules instead of opt-in. Lint allowances bypass the strict quality controls that ensure code correctness and maintainability.
+**RATIONALE**: This codebase's safety net depends on defaulting to opt-out for
+lint rules instead of opt-in. Lint allowances bypass the strict quality controls
+that ensure code correctness and maintainability.
 
 **EXCEPTIONS**: Some allowances are necessary and pre-approved:
-- `#[allow(clippy::print_stdout)]` for functions that write to stdout for Unix pipeline compatibility
+
+- `#[allow(clippy::print_stdout)]` for functions that write to stdout for Unix
+  pipeline compatibility
 - Allowances explicitly documented in existing code with clear justification
 
-**PROCEDURE**: 
+**PROCEDURE**:
+
 1. **Never add lint allowances during development**
 2. **Fix the underlying issue** that triggers the lint warning
 3. **If an allowance is truly necessary**, ask for explicit permission first
 4. **All lint allowances must be reviewed** before final quality checks
 5. **Remove any temporary allowances** before declaring work complete
 
-**ENFORCEMENT**: Any contribution that includes unauthorized lint allowances will be rejected, regardless of functionality completeness.
+**ENFORCEMENT**: Any contribution that includes unauthorized lint allowances
+will be rejected, regardless of functionality completeness.
 
 ### The Three-Test Rule (MANDATORY)
 
@@ -177,8 +238,8 @@ Key Grug Brain principles to follow:
   overly complex type gymnastics. Keep generics simple.
 - **Respect Chesterton's Fence**: Understand why code exists before changing it.
   That "ugly" code might handle edge cases you haven't considered.
-- **Premature Optimization Bad**: Make it work, make it right, then (maybe)
-  make it fast. Profile before optimizing.
+- **Premature Optimization Bad**: Make it work, make it right, then (maybe) make
+  it fast. Profile before optimizing.
 - **API Simplicity**: Design APIs that are hard to misuse. If it requires
   extensive documentation, it's too complex.
 
@@ -238,7 +299,9 @@ Example:
 
 **PRINCIPLE: Test outcomes, not implementation details**
 
-We do not subscribe to unit test absolutism or TDD dogma. Every test must provide real value by verifying observable behavior and outcomes, not internal implementation details.
+We do not subscribe to unit test absolutism or TDD dogma. Every test must
+provide real value by verifying observable behavior and outcomes, not internal
+implementation details.
 
 ### Core Testing Principles
 
@@ -298,7 +361,8 @@ We do not subscribe to unit test absolutism or TDD dogma. Every test must provid
   in main
 - Keep functions focused and under 70 lines
 - Use descriptive names that reflect bioinformatics domain
-- **NO EMOJIS**: Do not use emojis in code, comments, documentation, or commit messages
+- **NO EMOJIS**: Do not use emojis in code, comments, documentation, or commit
+  messages
 
 ### Self-Documenting Types (Soft Rule)
 
@@ -406,7 +470,10 @@ hash_files(
 )?;
 ```
 
-**Note**: For simple boolean flags, type aliases provide documentation benefits without the overhead of wrapper types. Reserve newtype patterns for cases where you need:
+**Note**: For simple boolean flags, type aliases provide documentation benefits
+without the overhead of wrapper types. Reserve newtype patterns for cases where
+you need:
+
 - Validation logic
 - Multiple representations of the same underlying type
 - Prevention of mixing different semantic meanings
@@ -550,47 +617,73 @@ naturally emerges in a feature-rich CLI tool.
 
 **CRITICAL**: This project follows a strict dependency management policy:
 
-1. **Always ask before adding dependencies** - Every new dependency must be approved by the user before adding to Cargo.toml
-2. **Justify every dependency** - Each dependency must have a clear, documented reason for inclusion
+1. **Always ask before adding dependencies** - Every new dependency must be
+   approved by the user before adding to Cargo.toml
+2. **Justify every dependency** - Each dependency must have a clear, documented
+   reason for inclusion
 3. **Prefer standard library** - Use std over external crates when possible
-4. **Minimal footprint** - The project must not become bloated with unnecessary dependencies
-5. **Security conscious** - All dependencies must be actively maintained and security-audited
+4. **Minimal footprint** - The project must not become bloated with unnecessary
+   dependencies
+5. **Security conscious** - All dependencies must be actively maintained and
+   security-audited
 
 ### Current Dependencies and Justifications
 
 #### Core Dependencies
-- **clap** (4.4.3) - CLI argument parsing with derive macros. Essential for user-friendly command-line interface
-- **clap-verbosity-flag** (2.1.1) - Standard verbosity flags (-v, -vv, etc). Provides consistent logging control
-- **color-eyre** (0.6.3) - Error reporting in main.rs only. Provides helpful error context and backtraces
-- **thiserror** (2.0.12) - Derive macro for custom error types. Enables proper error handling throughout codebase
+
+- **clap** (4.4.3) - CLI argument parsing with derive macros. Essential for
+  user-friendly command-line interface
+- **clap-verbosity-flag** (2.1.1) - Standard verbosity flags (-v, -vv, etc).
+  Provides consistent logging control
+- **color-eyre** (0.6.3) - Error reporting in main.rs only. Provides helpful
+  error context and backtraces
+- **thiserror** (2.0.12) - Derive macro for custom error types. Enables proper
+  error handling throughout codebase
 
 #### Hashing Dependencies
-- **sha2** (0.10.8) - SHA-256 implementation. Required for cryptographically secure hashing
-- **md-5** (0.10.6) - MD5 implementation. Required for backward compatibility with legacy systems
-- **digest** (0.10.7) - Trait definitions for hash functions. Enables generic programming over hash algorithms
+
+- **sha2** (0.10.8) - SHA-256 implementation. Required for cryptographically
+  secure hashing
+- **md-5** (0.10.6) - MD5 implementation. Required for backward compatibility
+  with legacy systems
+- **digest** (0.10.7) - Trait definitions for hash functions. Enables generic
+  programming over hash algorithms
 
 #### Performance Dependencies
-- **rayon** (1.10.0) - Data parallelism for Merkle tree computation. Critical for multicore performance
+
+- **rayon** (1.10.0) - Data parallelism for Merkle tree computation. Critical
+  for multicore performance
 
 #### Utility Dependencies
-- **fern** (0.7.1) - Logging configuration with colors. Provides structured, readable log output
+
+- **fern** (0.7.1) - Logging configuration with colors. Provides structured,
+  readable log output
 - **log** (0.4.27) - Logging facade. Standard Rust logging interface
-- **jiff** (0.2.6) - Time handling for timestamps. More robust than chrono for timestamp formatting
-- **ignore** (0.4.23) - Recursive directory traversal. Powers ripgrep's file walking, respects .gitignore
-- **indicatif** (0.17.9) - Progress bars for better UX. Essential for large file operations
+- **jiff** (0.2.6) - Time handling for timestamps. More robust than chrono for
+  timestamp formatting
+- **ignore** (0.4.23) - Recursive directory traversal. Powers ripgrep's file
+  walking, respects .gitignore
+- **indicatif** (0.17.9) - Progress bars for better UX. Essential for large file
+  operations
 
 #### Dev Dependencies (Test Only)
-- **pretty_assertions** (1.4.1) - Better test assertion output. Improves debugging experience
-- **tempfile** (3.19.1) - Temporary file creation for tests. Essential for file I/O testing
+
+- **pretty_assertions** (1.4.1) - Better test assertion output. Improves
+  debugging experience
+- **tempfile** (3.19.1) - Temporary file creation for tests. Essential for file
+  I/O testing
 - **proptest** (1.4.0) - Property-based testing. Ensures algorithmic correctness
-- **criterion** (0.5.1) - Benchmarking framework. Measures performance improvements
+- **criterion** (0.5.1) - Benchmarking framework. Measures performance
+  improvements
 - **rstest** (0.18.2) - Parametrized testing. Reduces test boilerplate
 
-Note: Previous questionable dependencies (displaydoc, base64ct, indicatif) have been removed
+Note: Previous questionable dependencies (displaydoc, base64ct, indicatif) have
+been removed
 
 ### Adding New Dependencies
 
 Before adding any dependency:
+
 1. Check if std library can solve the problem
 2. Document why the dependency is necessary
 3. Get explicit approval from the project maintainer
@@ -608,14 +701,17 @@ Before adding any dependency:
 3. **BE EXPLICIT** - List individual files and directories
 4. **Wildcards are only acceptable for file extensions** (e.g., `*.rs`, `*.yml`)
 
-**Why?** This prevents accidentally committing sensitive files, build artifacts, or temporary files. It forces deliberate decisions about what to track.
+**Why?** This prevents accidentally committing sensitive files, build artifacts,
+or temporary files. It forces deliberate decisions about what to track.
 
 **Rules:**
+
 - **NEVER** use wildcards like `/**` or `/*` in allow patterns
 - **ALWAYS** list files explicitly: `!/src/main.rs` not `!/src/**`
 - **ONLY** use wildcards for specific extensions: `!/tests/data/*.md5`
 
 **To add a new file to version control:**
+
 ```gitignore
 # Good - Explicit
 !/src/new_module.rs

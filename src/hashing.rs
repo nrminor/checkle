@@ -1,3 +1,55 @@
+//! High-performance parallel hashing using Merkle trees.
+//!
+//! This module provides the core hashing functionality that makes checkle faster than
+//! traditional checksum utilities. It implements a Merkle tree-based approach that
+//! parallelizes hash computation across all available CPU cores, achieving near-linear
+//! speedup on multicore systems.
+//!
+//! # Architecture
+//!
+//! The module uses a two-phase approach:
+//! 1. **Parallel I/O Phase**: Large files are divided into regions, with each CPU core
+//!    reading and hashing its assigned region independently
+//! 2. **Merkle Tree Phase**: The chunk hashes are combined using a parallel binary tree
+//!    reduction to produce a single root hash
+//!
+//! # Performance Characteristics
+//!
+//! - **Small files** (<64MB): Sequential processing for minimal overhead
+//! - **Large files** (≥64MB): Parallel processing with near-linear speedup
+//! - **Memory usage**: Bounded by `CHUNK_SIZE` × `parallel_readers`
+//! - **I/O pattern**: Sequential within regions to maximize SSD throughput
+//!
+//! # Usage Examples
+//!
+//! ```no_run
+//! use checkle::hashing::{Hasher, HashingAlgo};
+//! use std::path::Path;
+//!
+//! // Hash a file with MD5 (fast, legacy-compatible)
+//! let path = Path::new("genome.fastq.gz");
+//! let hasher = Hasher::new_md5(path);
+//! let hash = hasher.find_root_hash().expect("Failed to compute hash");
+//! println!("MD5: {}", hash);
+//!
+//! // Hash with SHA256 (cryptographically secure)
+//! let hasher = Hasher::new_sha2(path);
+//! let hash = hasher.find_root_hash().expect("Failed to compute hash");
+//! println!("SHA256: {}", hash);
+//!
+//! // Verify a file against a known hash
+//! let hasher = Hasher::new_md5(path);
+//! hasher.checksum("d41d8cd98f00b204e9800998ecf8427e")
+//!     .expect("Verification failed");
+//! ```
+//!
+//! # Implementation Details
+//!
+//! The Merkle tree approach ensures deterministic results regardless of parallelization
+//! level. Each chunk is hashed independently, then pairs of hashes are combined
+//! recursively until a single root hash remains. This provides both parallelization
+//! benefits and cryptographic integrity guarantees.
+
 use log::{debug, info, warn};
 use md5::Md5;
 use rayon::prelude::*;
@@ -333,10 +385,34 @@ fn read_and_hash_region<D: Digest + Default + Send + Sync, const N: usize>(
     Ok(hash_results)
 }
 
+/// Supported hashing algorithms.
+///
+/// checkle supports multiple hashing algorithms to balance between speed
+/// and security requirements. MD5 is the default for maximum compatibility
+/// with existing bioinformatics pipelines.
+///
+/// # Examples
+///
+/// ```no_run
+/// use checkle::hashing::HashingAlgo;
+/// use std::str::FromStr;
+///
+/// // Parse from string (case-insensitive)
+/// let algo = HashingAlgo::from_str("md5").unwrap();
+/// assert_eq!(algo, HashingAlgo::Md5);
+///
+/// // Use the default (MD5 for speed and compatibility)
+/// let default = HashingAlgo::default();
+/// assert_eq!(default, HashingAlgo::Md5);
+/// ```
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum HashingAlgo {
+    /// MD5 algorithm - fast, widely supported, suitable for integrity checks.
+    /// Not cryptographically secure but perfect for detecting data corruption.
     #[default]
     Md5,
+    /// SHA-256 algorithm - cryptographically secure, slower than MD5.
+    /// Use when security is more important than speed.
     Sha2,
 }
 
@@ -397,11 +473,40 @@ fn get_available_cpus() -> usize {
         .clamp(1, MAX_PARALLEL_READERS)
 }
 
+/// High-performance file hasher using Merkle tree parallelization.
+///
+/// The `Hasher` struct is the main entry point for computing file hashes.
+/// It automatically selects between sequential and parallel processing based
+/// on file size and available CPU cores.
+///
+/// # Type Parameters
+///
+/// * `N` - The size of the hash output in bytes (16 for MD5, 32 for SHA256)
+///
+/// # Examples
+///
+/// ```no_run
+/// use checkle::hashing::Hasher;
+/// use std::path::Path;
+///
+/// let path = Path::new("large_file.bin");
+/// let hasher = Hasher::new_md5(path)
+///     .with_chunk_size(4 * 1024 * 1024).unwrap() // 4MB chunks
+///     .with_parallel_readers(4);
+///
+/// // Compute the hash
+/// let hash = hasher.find_root_hash().unwrap();
+/// ```
 pub struct Hasher<'a, const N: usize> {
+    /// Path to the file being hashed
     pub path: &'a Path,
+    /// Algorithm to use for hashing
     pub algorithm: HashingAlgo,
+    /// Size of chunks to read (in bytes)
     pub chunk_size: usize,
+    /// Number of parallel reader threads
     pub parallel_readers: usize,
+    /// Optional progress callback for long operations
     pub progress_callback: Option<Box<dyn Fn(u64) + Send + Sync>>,
 }
 
@@ -553,7 +658,32 @@ impl<'a, const N: usize> Hasher<'a, N> {
     ///
     /// # Panics
     ///
-    /// Never panics - all validation is done through Result return.
+    /// Configures the chunk size for reading and hashing.
+    ///
+    /// Larger chunks can improve throughput for fast storage, while smaller
+    /// chunks reduce memory usage. The size will be aligned to page boundaries.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - Desired chunk size in bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if size is outside valid bounds (256KB - 16MB).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use checkle::errors::Result;
+    /// # fn main() -> Result<()> {
+    /// use checkle::hashing::Hasher;
+    /// use std::path::Path;
+    ///
+    /// let hasher = Hasher::new_md5(Path::new("file.bin"))
+    ///     .with_chunk_size(4 * 1024 * 1024)?; // 4MB chunks
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_chunk_size(mut self, size: usize) -> Result<Self> {
         // Validate and align chunk size
         self.chunk_size = validate_chunk_size(size)?;
@@ -576,19 +706,30 @@ impl<'a, const N: usize> Hasher<'a, N> {
         Ok(self)
     }
 
-    /// Builder method to configure number of parallel readers.
+    /// Configures the number of parallel reader threads.
+    ///
+    /// More threads can improve performance on multicore systems, but may
+    /// increase memory usage. The value is automatically clamped to system limits.
     ///
     /// # Arguments
     ///
     /// * `count` - The desired number of parallel readers
     ///
-    /// # Returns
+    /// # Examples
     ///
-    /// The configured hasher instance.
+    /// ```no_run
+    /// use checkle::hashing::Hasher;
+    /// use std::path::Path;
+    ///
+    /// let hasher = Hasher::new_sha2(Path::new("genome.fasta"))
+    ///     .with_parallel_readers(8); // Use 8 threads
+    /// ```
     ///
     /// # Panics
     ///
-    /// Never panics - input is clamped to valid range.
+    /// This function contains postcondition assertions that verify the parallel
+    /// readers count is positive and within bounds, but these should never fail
+    /// in practice due to the clamping logic.
     #[must_use]
     pub fn with_parallel_readers(mut self, count: usize) -> Self {
         self.parallel_readers = count.clamp(1, MAX_PARALLEL_READERS);
@@ -606,23 +747,31 @@ impl<'a, const N: usize> Hasher<'a, N> {
         self
     }
 
-    /// Builder method to set a progress callback for hashing operations.
+    /// Sets a progress callback for tracking hash computation.
     ///
-    /// The callback will be invoked with the number of bytes processed so far.
-    /// This is useful for displaying progress bars or other progress indicators.
+    /// The callback will be invoked periodically with the number of bytes processed.
+    /// Useful for implementing progress bars or status updates for large files.
     ///
     /// # Arguments
     ///
-    /// * `callback` - A function that takes the number of bytes processed
+    /// * `callback` - A function that receives bytes processed so far
     ///
-    /// # Returns
+    /// # Examples
     ///
-    /// The configured hasher instance for method chaining.
+    /// ```no_run
+    /// use checkle::hashing::Hasher;
+    /// use std::path::Path;
+    ///
+    /// let hasher = Hasher::new_md5(Path::new("huge.tar.gz"))
+    ///     .with_progress_callback(|bytes| {
+    ///         println!("Processed {} MB", bytes / 1_000_000);
+    ///     });
+    /// ```
     ///
     /// # Panics
     ///
-    /// This function includes a postcondition assertion that verifies the callback was set,
-    /// but this should never panic in practice.
+    /// This function contains a postcondition assertion that verifies the callback
+    /// was set, but this should never fail in practice.
     #[must_use]
     pub fn with_progress_callback<F>(mut self, callback: F) -> Self
     where
@@ -1031,21 +1180,47 @@ impl<'a, const N: usize> Hasher<'a, N> {
         Ok(hash_array)
     }
 
-    /// Computes the root hash of the file using a Merkle tree.
+    /// Computes and returns the Merkle root hash as a hex string.
+    ///
+    /// This is the main method for computing a file's hash. It automatically
+    /// selects the optimal strategy (sequential vs parallel) based on file size.
+    ///
+    /// # Returns
+    ///
+    /// A lowercase hexadecimal string representation of the hash.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - File I/O operations fail
-    /// - Hash computation fails
-    /// - The Merkle tree doesn't produce exactly one root hash
+    /// - File cannot be read
+    /// - Insufficient permissions
+    /// - I/O error occurs during processing
+    ///
+    /// # Performance
+    ///
+    /// For files ≥64MB, this method will use parallel I/O across all available
+    /// CPU cores, providing near-linear speedup on modern multicore systems.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use checkle::hashing::Hasher;
+    /// use std::path::Path;
+    ///
+    /// let path = Path::new("genome.fastq");
+    /// let hasher = Hasher::new_md5(path);
+    /// match hasher.find_root_hash() {
+    ///     Ok(hash) => println!("MD5: {}", hash),
+    ///     Err(e) => eprintln!("Error: {}", e),
+    /// }
+    /// ```
     ///
     /// # Panics
     ///
     /// Panics if:
     /// - The file doesn't exist
     /// - The path is not a file
-    /// - The resulting hash string is empty or invalid
+    /// - The resulting hash string is empty or invalid (postcondition checks)
     pub fn find_root_hash(self) -> Result<String> {
         // Precondition assertions
         assert!(
@@ -1137,22 +1312,35 @@ impl<'a, const N: usize> Hasher<'a, N> {
         Ok(hex_hash)
     }
 
-    /// Verifies that the file's hash matches the provided hash.
+    /// Verifies that the file's hash matches the expected value.
+    ///
+    /// # Arguments
+    ///
+    /// * `expected_hash` - The expected hash as a hex string (case-insensitive)
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - File I/O operations fail
+    /// - The computed hash doesn't match the expected hash
+    /// - File cannot be read
     /// - Hash computation fails
-    /// - The computed hash doesn't match the provided hash
     ///
-    /// # Panics
+    /// # Examples
     ///
-    /// Panics if:
-    /// - The file doesn't exist
-    /// - The path is not a file
-    /// - The provided hash is empty or contains non-hexadecimal characters
-    pub fn checksum(self, old_hash: &str) -> Result<()> {
+    /// ```no_run
+    /// use checkle::hashing::Hasher;
+    /// use std::path::Path;
+    ///
+    /// let path = Path::new("data.csv");
+    /// let hasher = Hasher::new_sha2(path);
+    ///
+    /// // Verify against known hash
+    /// match hasher.checksum("e3b0c44298fc1c149afbf4c8996fb924") {
+    ///     Ok(()) => println!("✓ Verification passed"),
+    ///     Err(e) => eprintln!("✗ Verification failed: {}", e),
+    /// }
+    /// ```
+    pub fn checksum(self, expected_hash: &str) -> Result<()> {
         // Precondition assertions
         // Validate file exists
         if !self.path.exists() {
@@ -1160,18 +1348,18 @@ impl<'a, const N: usize> Hasher<'a, N> {
         }
 
         // Validate hash is not empty
-        if old_hash.is_empty() {
+        if expected_hash.is_empty() {
             return Err(CheckleError::InvalidChecksumFile(self.path.to_path_buf()));
         }
 
         // Validate hash contains only hexadecimal characters
-        if !simd::is_hex_string(old_hash) {
+        if !simd::is_hex_string(expected_hash) {
             return Err(CheckleError::InvalidChecksumFile(self.path.to_path_buf()));
         }
 
         let file = self.path.to_path_buf();
         let new_hash = self.find_root_hash()?;
-        compared_hashes(old_hash, &new_hash, &file)?;
+        compared_hashes(expected_hash, &new_hash, &file)?;
 
         // Postcondition assertion - only reached if hashes match
         // (if they don't match, compared_hashes returns an error)
@@ -1180,10 +1368,18 @@ impl<'a, const N: usize> Hasher<'a, N> {
     }
 }
 
+/// Container for an array of fixed-size hashes.
+///
+/// Used internally for Merkle tree computation to hold intermediate hash values.
+/// Each hash is a fixed-size byte array determined by the algorithm.
 pub struct HashArray<const N: usize> {
     pub(crate) hashes: Vec<[u8; N]>,
 }
 
+/// Trait for types that can participate in Merkle tree computation.
+///
+/// This trait enables parallel reduction of hash arrays into a single root hash
+/// using a binary tree structure.
 pub trait MerkleIter<const N: usize> {
     /// Performs parallel Merkle tree computation on the hash array.
     ///
@@ -1191,8 +1387,14 @@ pub trait MerkleIter<const N: usize> {
     ///
     /// Returns an error if hash computation fails.
     fn par_iter_merkle<D: Digest + Default>(self) -> Result<HashArray<N>>;
+
+    /// Extracts the underlying hash array.
     fn get_hashes(self) -> Vec<[u8; N]>;
+
+    /// Returns the number of hashes in the array.
     fn len(&self) -> usize;
+
+    /// Returns true if the array contains no hashes.
     fn is_empty(&self) -> bool
     where
         Self: Sized,
@@ -1346,9 +1548,31 @@ impl FilesToCheck {
 
 /// Compares two hash strings and returns an error if they don't match.
 ///
+/// This is a utility function for checksum verification that compares
+/// an expected hash against a computed hash.
+///
+/// # Arguments
+///
+/// * `old_hash` - The expected hash value
+/// * `new_hash` - The computed hash value
+/// * `file` - Path to the file being verified (for error reporting)
+///
 /// # Errors
 ///
 /// Returns `CheckleError::FailedChecksum` if the hashes don't match.
+///
+/// # Examples
+///
+/// ```no_run
+/// use checkle::hashing::compared_hashes;
+/// use std::path::Path;
+///
+/// let expected = "d41d8cd98f00b204e9800998ecf8427e";
+/// let computed = "d41d8cd98f00b204e9800998ecf8427e";
+/// let file = Path::new("empty.txt");
+///
+/// assert!(compared_hashes(expected, computed, file).is_ok());
+/// ```
 ///
 /// # Panics
 ///

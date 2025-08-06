@@ -2,10 +2,10 @@
 
 use crate::{
     archive_path,
-    cli::{AbsolutePaths, NoProgress, OutputFormat, PerFileMode, PrettyPrint},
+    cli::{AbsolutePaths, FailedOnly, NoProgress, OutputFormat, PerFileMode, PrettyPrint},
     data_source::DataSource,
     errors::{CheckleError, Result},
-    io::{FilesToCheck, PathDisplayMode, format_path_for_display},
+    io::{PathDisplayMode, format_path_for_display},
     prelude::*,
     prettyprint::{
         VerificationResult, VerificationStatus, display_verification_table_with_summary,
@@ -35,6 +35,7 @@ pub struct VerifyManyConfig<'a> {
     pub max_files_batch: usize,
     pub no_progress: NoProgress,
     pub absolute_paths: AbsolutePaths,
+    pub failed_only: FailedOnly,
 }
 
 impl VerifyManyConfig<'_> {
@@ -101,6 +102,7 @@ impl VerifyManyConfig<'_> {
 /// * `parallel_readers` - Number of parallel readers for hashing
 /// * `max_files_batch` - Maximum number of files to process in batch
 /// * `no_progress` - Whether to disable progress display
+/// * `failed_only` - Whether to show only failed verifications
 ///
 /// # Errors
 ///
@@ -120,6 +122,7 @@ pub fn execute(
     max_files_batch: usize,
     no_progress: NoProgress,
     absolute_paths: AbsolutePaths,
+    failed_only: FailedOnly,
 ) -> Result<()> {
     let config = VerifyManyConfig {
         checksum_file,
@@ -134,6 +137,7 @@ pub fn execute(
         max_files_batch,
         no_progress,
         absolute_paths,
+        failed_only,
     };
 
     config.execute_verification()
@@ -200,14 +204,19 @@ impl VerifyManyConfig<'_> {
                 self.format,
                 self.pretty,
                 self.absolute_paths,
+                self.failed_only,
             )?;
         } else if self.pretty {
-            display_verification_results_pretty(&verification_results)?;
+            display_verification_results_pretty(&verification_results, self.failed_only)?;
         } else {
-            output_structured_verification(&verification_results, self.absolute_paths)?;
+            output_structured_verification(
+                &verification_results,
+                self.absolute_paths,
+                self.failed_only,
+            )?;
         }
 
-        // Check if any verifications failed
+        // Check if any verifications failed (use original results, not filtered)
         check_verification_failures(&verification_results)
     }
 
@@ -320,11 +329,9 @@ impl VerifyManyConfig<'_> {
             .checksum_file
             .expect("checksum_file must be Some (validated)");
 
-        if self.pretty || self.report.is_some() || self.format.is_some() {
-            self.verify_with_full_reporting(checksum_file_path)
-        } else {
-            verify_with_simple_output(checksum_file_path, self.algo, self.max_files_batch)
-        }
+        // Always use the full reporting path to get progress support,
+        // but output will be handled differently based on flags
+        self.verify_with_full_reporting(checksum_file_path)
     }
 
     /// Verify with full reporting capabilities (pretty/report/format).
@@ -373,12 +380,20 @@ impl VerifyManyConfig<'_> {
                 self.format,
                 self.pretty,
                 self.absolute_paths,
+                self.failed_only,
             )?;
         } else if self.pretty {
-            display_verification_results_pretty(&verification_results)?;
+            display_verification_results_pretty(&verification_results, self.failed_only)?;
+        } else {
+            // Simple output to stdout
+            output_structured_verification(
+                &verification_results,
+                self.absolute_paths,
+                self.failed_only,
+            )?;
         }
 
-        // Check if any verifications failed
+        // Check if any verifications failed (use original results, not filtered)
         check_verification_failures(&verification_results)
     }
 }
@@ -474,47 +489,6 @@ fn verify_single_file(
     }
 }
 
-/// Verify with simple output (using `FilesToCheck`).
-fn verify_with_simple_output(
-    checksum_file_path: &Path,
-    algo: HashingAlgo,
-    max_files_batch: usize,
-) -> Result<()> {
-    let checksum_file_str = checksum_file_path.to_string_lossy();
-
-    let files_to_check =
-        if let Some(archive_components) = archive_path::parse_archive_path(&checksum_file_str) {
-            // Checksum file is within an archive
-            debug!(
-                "Processing checksum file from archive: {}:{}",
-                archive_components.archive().display(),
-                archive_components.entry()
-            );
-            // Check if archive exists before trying to read from it
-            if !archive_components.archive().exists() {
-                return Err(CheckleError::InaccessibleFile(
-                    archive_components.archive().to_path_buf(),
-                ));
-            }
-            FilesToCheck::new_from_archive(&archive_components)?
-        } else {
-            // Regular checksum file
-            FilesToCheck::new_from_txt(checksum_file_path)?
-        };
-
-    // Check if the number of files exceeds the batch limit
-    let file_count = files_to_check.len();
-    if file_count > max_files_batch {
-        return Err(CheckleError::ExceededFileBatchSize {
-            found: file_count,
-            limit: max_files_batch,
-        });
-    }
-
-    files_to_check.checksum_all(&algo)?;
-    Ok(())
-}
-
 /// Output verification report in the requested format.
 fn output_verification_report(
     verification_results: &[Result<VerificationResult>],
@@ -522,6 +496,7 @@ fn output_verification_report(
     format: Option<OutputFormat>,
     pretty: PrettyPrint,
     absolute_paths: AbsolutePaths,
+    failed_only: FailedOnly,
 ) -> Result<()> {
     // Detect format from file extension if not explicitly provided
     let output_format = if let Some(fmt) = format {
@@ -539,7 +514,10 @@ fn output_verification_report(
     for result in verification_results {
         match result {
             Ok(verification_result) => {
-                successful_results.push(verification_result.clone());
+                // Filter based on failed_only flag
+                if !failed_only || !verification_result.passed() {
+                    successful_results.push(verification_result.clone());
+                }
             }
             Err(e) => {
                 error!("Error during verification: {e}");
@@ -589,13 +567,17 @@ fn output_verification_report(
 /// Display verification results in a pretty table.
 fn display_verification_results_pretty(
     verification_results: &[Result<VerificationResult>],
+    failed_only: FailedOnly,
 ) -> Result<()> {
     let mut display_results: Vec<VerificationResult> = Vec::new();
 
     for result in verification_results {
         match result {
             Ok(verification_result) => {
-                display_results.push(verification_result.clone());
+                // Filter based on failed_only flag
+                if !failed_only || !verification_result.passed() {
+                    display_results.push(verification_result.clone());
+                }
             }
             Err(e) => {
                 error!("Error during verification: {e}");
@@ -607,11 +589,98 @@ fn display_verification_results_pretty(
     Ok(())
 }
 
+/// Process a single verification result for structured output.
+fn process_verification_result(
+    verification_result: &VerificationResult,
+    output_lines: &mut Vec<String>,
+    failed_files: &mut Vec<PathBuf>,
+    successful_count: &mut usize,
+    absolute_paths: AbsolutePaths,
+) {
+    match verification_result.status() {
+        VerificationStatus::Pass => {
+            output_lines.push(format!(
+                "PASS\t{}",
+                format_path_for_display(
+                    verification_result.file(),
+                    PathDisplayMode::from_flag(absolute_paths)
+                )
+            ));
+            info!(
+                "Verified: {}",
+                format_path_for_display(
+                    verification_result.file(),
+                    PathDisplayMode::from_flag(absolute_paths)
+                )
+            );
+            *successful_count += 1;
+        }
+        VerificationStatus::Fail => {
+            output_lines.push(format!(
+                "FAIL\t{}",
+                format_path_for_display(
+                    verification_result.file(),
+                    PathDisplayMode::from_flag(absolute_paths)
+                )
+            ));
+            info!(
+                "Verification failed for {}: {}",
+                format_path_for_display(
+                    verification_result.file(),
+                    PathDisplayMode::from_flag(absolute_paths)
+                ),
+                verification_result
+                    .error_message()
+                    .unwrap_or("Hash mismatch")
+            );
+            failed_files.push(verification_result.file().to_path_buf());
+        }
+        VerificationStatus::Missing => {
+            output_lines.push(format!(
+                "MISS\t{}",
+                format_path_for_display(
+                    verification_result.file(),
+                    PathDisplayMode::from_flag(absolute_paths)
+                )
+            ));
+            warn!(
+                "File not found: {}",
+                format_path_for_display(
+                    verification_result.file(),
+                    PathDisplayMode::from_flag(absolute_paths)
+                )
+            );
+            // Don't add missing files to failed_files - they're warnings, not failures
+        }
+        VerificationStatus::Error(_) => {
+            output_lines.push(format!(
+                "ERROR\t{}",
+                format_path_for_display(
+                    verification_result.file(),
+                    PathDisplayMode::from_flag(absolute_paths)
+                )
+            ));
+            error!(
+                "Error verifying {}: {}",
+                format_path_for_display(
+                    verification_result.file(),
+                    PathDisplayMode::from_flag(absolute_paths)
+                ),
+                verification_result
+                    .error_message()
+                    .unwrap_or("Unknown error")
+            );
+            failed_files.push(verification_result.file().to_path_buf());
+        }
+    }
+}
+
 /// Output verification results in structured format (tab-delimited).
 #[allow(clippy::print_stdout)]
 fn output_structured_verification(
     verification_results: &[Result<VerificationResult>],
     absolute_paths: AbsolutePaths,
+    failed_only: FailedOnly,
 ) -> Result<()> {
     // Collect all output lines first to print as a single block (avoids interleaving with logs)
     let mut output_lines = Vec::with_capacity(verification_results.len());
@@ -620,82 +689,20 @@ fn output_structured_verification(
 
     for result in verification_results {
         match result {
-            Ok(verification_result) => match verification_result.status() {
-                VerificationStatus::Pass => {
-                    output_lines.push(format!(
-                        "PASS\t{}",
-                        format_path_for_display(
-                            verification_result.file(),
-                            PathDisplayMode::from_flag(absolute_paths)
-                        )
-                    ));
-                    info!(
-                        "Verified: {}",
-                        format_path_for_display(
-                            verification_result.file(),
-                            PathDisplayMode::from_flag(absolute_paths)
-                        )
-                    );
-                    successful_count += 1;
+            Ok(verification_result) => {
+                // Filter based on failed_only flag
+                if failed_only && verification_result.passed() {
+                    continue;
                 }
-                VerificationStatus::Fail => {
-                    output_lines.push(format!(
-                        "FAIL\t{}",
-                        format_path_for_display(
-                            verification_result.file(),
-                            PathDisplayMode::from_flag(absolute_paths)
-                        )
-                    ));
-                    error!(
-                        "Verification failed for {}: {}",
-                        format_path_for_display(
-                            verification_result.file(),
-                            PathDisplayMode::from_flag(absolute_paths)
-                        ),
-                        verification_result
-                            .error_message()
-                            .unwrap_or("Hash mismatch")
-                    );
-                    failed_files.push(verification_result.file().to_path_buf());
-                }
-                VerificationStatus::Missing => {
-                    output_lines.push(format!(
-                        "MISS\t{}",
-                        format_path_for_display(
-                            verification_result.file(),
-                            PathDisplayMode::from_flag(absolute_paths)
-                        )
-                    ));
-                    error!(
-                        "File not found: {}",
-                        format_path_for_display(
-                            verification_result.file(),
-                            PathDisplayMode::from_flag(absolute_paths)
-                        )
-                    );
-                    failed_files.push(verification_result.file().to_path_buf());
-                }
-                VerificationStatus::Error(_) => {
-                    output_lines.push(format!(
-                        "ERROR\t{}",
-                        format_path_for_display(
-                            verification_result.file(),
-                            PathDisplayMode::from_flag(absolute_paths)
-                        )
-                    ));
-                    error!(
-                        "Error verifying {}: {}",
-                        format_path_for_display(
-                            verification_result.file(),
-                            PathDisplayMode::from_flag(absolute_paths)
-                        ),
-                        verification_result
-                            .error_message()
-                            .unwrap_or("Unknown error")
-                    );
-                    failed_files.push(verification_result.file().to_path_buf());
-                }
-            },
+
+                process_verification_result(
+                    verification_result,
+                    &mut output_lines,
+                    &mut failed_files,
+                    &mut successful_count,
+                    absolute_paths,
+                );
+            }
             Err(e) => {
                 // Handle verification errors - these are errors that occurred during the verification process
                 error!("Verification error: {e}");
@@ -707,12 +714,15 @@ fn output_structured_verification(
     // Print all verification results as a single block to stdout
     if !output_lines.is_empty() {
         println!("{}", output_lines.join("\n"));
+    } else if failed_only {
+        // When using --failed flag and no failures found
+        println!("All files passed verification");
     }
 
     info!("Verified {successful_count} files successfully");
 
     if !failed_files.is_empty() {
-        error!("{} files failed verification", failed_files.len());
+        info!("{} files failed verification", failed_files.len());
         return Err(CheckleError::MultipleFailedChecksums);
     }
 
@@ -723,7 +733,10 @@ fn output_structured_verification(
 fn check_verification_failures(verification_results: &[Result<VerificationResult>]) -> Result<()> {
     let has_failures = verification_results.iter().any(|r| {
         match r {
-            Ok(verification_result) => !verification_result.passed(),
+            Ok(verification_result) => {
+                // Only count actual checksum failures, not missing files
+                matches!(verification_result.status(), VerificationStatus::Fail)
+            }
             Err(_) => true, // Errors are also considered failures
         }
     });

@@ -116,6 +116,7 @@ fn run_main() -> Result<()> {
             max_files_batch,
             no_progress,
             absolute_paths,
+            failed_only,
         }) => {
             commands::verify_many::execute(
                 checksum_file.as_deref(),
@@ -130,6 +131,7 @@ fn run_main() -> Result<()> {
                 max_files_batch.unwrap_or(cli.max_files_batch),
                 no_progress,
                 absolute_paths,
+                failed_only,
             )?;
             Ok(())
         }

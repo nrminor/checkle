@@ -14,8 +14,8 @@ build = "build.rs"
 
 [features]
 default = ["archives"]
-archives = ["tar", "zip"]
-tar-only = ["tar"]
+archives = ["tar", "zip", "flate2", "bzip2", "xz2"]
+tar-only = ["tar", "flate2", "bzip2", "xz2"]
 zip-only = ["zip"]
 simd = []  # Requires nightly toolchain for portable_simd
 
@@ -51,6 +51,10 @@ tar = { version = "0.4.40", optional = true }
 zip = { version = "0.6.6", optional = true, features = ["deflate", "bzip2"] }
 hex = "0.4.3"
 clap_complete = "4.5.0"
+# Decompression dependencies for archive support (Phase 1 fix)
+flate2 = { version = "1.0", optional = true }  # For .gz decompression
+bzip2 = { version = "0.4", optional = true }   # For .bz2 decompression
+xz2 = { version = "0.1", optional = true }     # For .xz decompression
 
 [profile.dev]
 incremental = true

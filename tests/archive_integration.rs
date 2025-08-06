@@ -142,6 +142,7 @@ mod integration_tests {
     }
 
     #[test]
+    #[ignore = "Disabled: Tests old behavior where --recursive looked inside archives. Should be rewritten to use explicit 'archive.tar:*' syntax after Phase 2 implementation"]
     #[cfg(feature = "tar")]
     fn test_cli_tar_all_files() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -186,6 +187,7 @@ mod integration_tests {
     }
 
     #[test]
+    #[ignore = "Disabled: Tests old behavior where --recursive looked inside archives. Should be rewritten to use explicit 'archive.zip:*' syntax after Phase 2 implementation"]
     #[cfg(feature = "zip")]
     fn test_cli_zip_nested_structure() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
@@ -323,6 +325,7 @@ mod integration_tests {
     }
 
     #[test]
+    #[ignore = "Disabled: Tests old behavior expecting progress output for files inside archives. Should be rewritten to use 'archive.tar:*' syntax after Phase 2 implementation"]
     #[cfg(feature = "tar")]
     fn test_cli_tar_progress_output() {
         let temp_dir = TempDir::new().expect("Failed to create temp directory");

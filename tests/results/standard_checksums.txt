@@ -8,3 +8,9 @@ bf3145d34908c2312330a97a15893952	/Users/nickminor/Documents/bioinformatics/check
 ee38caabb05595d849d9a3286ae26658	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/multiline.txt
 ad46d8897dad1309e997c255809bcd9f	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/single_line.txt
 62e4c2806116313a5117721d7e887049	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/special_chars.txt
+3cf60b0847245eba1f1f8fb6aa77cb4a	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/test_archive.tar
+e4ba256db24ae6d99aadbf4e5e5f1f23	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/test_archive.tar.bz2
+430a73c20a869e0ac66ff15a01c079bb	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/test_archive.tar.gz
+ab245285fdbc87d680bb947a8359cf08	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/test_archive.tar.xz
+f77558fb47cbebdf463e97b2ed1bfada	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/test_archive.zip
+e19d269d1757cacb8626365b51a87330	/Users/nickminor/Documents/bioinformatics/checkle/tests/data/test_file.txt

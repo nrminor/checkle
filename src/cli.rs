@@ -378,6 +378,15 @@ pub enum Commands {
             action = ArgAction::SetTrue
         )]
         absolute_paths: AbsolutePaths,
+
+        #[arg(
+            short = 'f',
+            long = "failed",
+            help = "Only show files that failed verification (includes failures, missing files, and errors)",
+            help_heading = "Output Options",
+            action = ArgAction::SetTrue
+        )]
+        failed_only: FailedOnly,
     },
 
     #[clap(
@@ -732,6 +741,9 @@ pub type NoIgnore = bool;
 
 /// When true, displays absolute paths instead of relative paths in output.
 pub type AbsolutePaths = bool;
+
+/// Type alias for the --failed flag in verify-many command.
+pub type FailedOnly = bool;
 
 mod utils {
     use crate::errors::CheckleError;
