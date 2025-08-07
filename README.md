@@ -9,7 +9,7 @@
 A `checksum` utility for the multicore era.
 
 > [!WARNING]
-> `checkle` is an interesting but ultimately abandoned prototype. It rapidly
+> `checkle` is an interesting but ultimately unsuccessful prototype. It rapidly
 > performs hashes and has an excellent UX, but for theoretical reasons, it is
 > guaranteed to produces different hashes for large files than canonical tools
 > like `md5sum` do. In an attempt to become a parallelized Merkle tree
