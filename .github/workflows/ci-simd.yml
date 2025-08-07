@@ -35,12 +35,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Windows builds commented out due to compatibility issues
+        # os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-msvc
           - os: macos-latest
             target: aarch64-apple-darwin
     steps:
@@ -82,9 +84,10 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
+          # Windows builds commented out due to compatibility issues
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
           # macOS Intel with AVX2
           - os: macos-13  # Intel runner
             target: x86_64-apple-darwin

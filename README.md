@@ -102,9 +102,6 @@ wget https://github.com/nrminor/checkle/releases/latest/download/checkle-x86_64-
 #### Cargo Install
 
 ```bash
-# From crates.io (when published)
-cargo install checkle
-
 # With cargo-binstall (if available)
 cargo binstall checkle
 

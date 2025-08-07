@@ -124,9 +124,21 @@
 
 # -----------------------------------------------------------------------------
 # Documentation
-# Project documentation files
+# mdbook project
 # -----------------------------------------------------------------------------
 !/docs/
+!/docs/book.toml
+!/docs/src/
+!/docs/src/SUMMARY.md
+!/docs/src/introduction.md
+!/docs/src/guide/
+!/docs/src/guide/*.md
+!/docs/src/features/
+!/docs/src/features/*.md
+!/docs/src/contributing/
+!/docs/src/contributing/*.md
+!/docs/src/reference/
+!/docs/src/reference/*.md
 
 # -----------------------------------------------------------------------------
 # Context
