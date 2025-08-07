@@ -1,30 +1,42 @@
 # Introduction
 
-Welcome to the Checkle documentation! Checkle is a fast and versatile file integrity checker designed for modern systems.
+> ⚠️ **CRITICAL: DO NOT USE FOR STANDARD CHECKSUMS**
+> 
+> This project is an unsuccessful prototype that will produce different hashes
+> than `md5sum` and `sha256sum` for all files larger than 1MB. `checkle` is thus
+> incompatible with standard MD5/SHA256 checksum utilities.
+> 
+> Please use standard time-tested tools like `md5sum` or `sha256sum` instead.
 
-## What is Checkle?
+Welcome to checkle - an extremely fast checksum utility designed for bioinformatics workflows involving terabyte-scale genomics data.
 
-Checkle is a command-line tool that helps you verify file integrity through various hash algorithms. It's built with performance in mind, utilizing parallel processing and SIMD acceleration where available.
+## What is checkle?
+
+checkle is a high-performance command-line tool that leverages Merkle tree parallelization to compute checksums faster than traditional tools like md5sum or sha256sum. It's specifically optimized for bioinformatics workflows where data integrity is critical and files can be hundreds of gigabytes each.
 
 ## Key Features
 
-- **Multiple Hash Algorithms**: Support for MD5, SHA-256, SHA-512, BLAKE3, and more
-- **High Performance**: Parallel processing and SIMD acceleration
-- **Archive Support**: Check files within archives without extraction
-- **Flexible Output**: JSON, CSV, or human-readable formats
-- **Cross-Platform**: Works on Linux, macOS, and Windows
+- **Blazing Fast**: 5-10x faster than md5sum on multicore systems
+- **Merkle Tree Parallelization**: Near-linear speedup with CPU cores
+- **Archive Support**: Hash files within TAR/ZIP archives without extraction
+- **Bioinformatics Focus**: Optimized for large genomics files (FASTQ, BAM, VCF)
+- **Multiple Output Formats**: Text, JSON, CSV for pipeline integration
+- **Progress Tracking**: Real-time progress for long-running operations
 
 ## Quick Example
 
 ```bash
-# Generate checksums for all files in a directory
-checkle -a sha256 /path/to/directory
+# Hash a single genome file
+checkle hash genome.fastq.gz
 
-# Verify checksums from a file
-checkle verify checksums.txt
+# Hash all FASTQ files in a sequencing run
+checkle hash /data/run_001 --recursive --include "*.fastq.gz"
 
-# Check specific files with multiple algorithms
-checkle -a md5,sha256,blake3 file1.txt file2.bin
+# Verify downloaded reference genome
+checkle verify GRCh38.fa.gz --hash e3b0c44298fc1c149afbf4c8996fb924
+
+# Hash files in compressed archive without extracting
+checkle hash sequencing_data.tar.gz:*.fastq
 ```
 
 ## Getting Started

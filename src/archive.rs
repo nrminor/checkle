@@ -451,6 +451,30 @@ pub trait ArchiveReader: Sized {
     /// yields an error for that entry.
     fn entries(&mut self) -> Result<ArchiveEntriesIterator<Self::Entry, Self::EntryMetadata>>;
 
+    /// List entries matching a given pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern` - Pattern to match entries against
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of entry paths that match the pattern.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Reading the archive directory fails
+    /// - Entry count exceeds `MAX_ARCHIVE_ENTRIES`
+    ///
+    /// # Panics
+    ///
+    /// Panics if the entry count or paths exceed expected limits.
+    fn list_matching_entries(
+        &mut self,
+        pattern: &crate::archive_path::ArchivePattern,
+    ) -> Result<Vec<String>>;
+
     /// Get the total number of entries in the archive.
     ///
     /// This is used for progress reporting and resource limit checks.
@@ -723,6 +747,49 @@ impl Archive {
         assert!(
             entries.iter().all(|path| !path.is_empty()),
             "All entry paths must be non-empty"
+        );
+
+        Ok(entries)
+    }
+
+    /// List entries in the archive that match a given pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern` - Pattern to match against entry paths
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of entry paths that match the pattern.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading the archive directory fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matching entry count exceeds expected limits.
+    pub fn list_matching_entries(
+        &mut self,
+        pattern: &crate::archive_path::ArchivePattern,
+    ) -> Result<Vec<String>> {
+        let entries = match self {
+            #[cfg(feature = "tar")]
+            Archive::Tar(archive) => archive.list_matching_entries(pattern),
+
+            #[cfg(feature = "zip")]
+            Archive::Zip(archive) => archive.list_matching_entries(pattern),
+        }?;
+
+        // Postcondition assertions (Tiger Style: minimum 2 per function)
+        assert!(
+            entries.len() <= MAX_ARCHIVE_ENTRIES,
+            "Matching entry count {} exceeds maximum {MAX_ARCHIVE_ENTRIES}",
+            entries.len()
+        );
+        assert!(
+            entries.iter().all(|path| !path.is_empty()),
+            "All matching entry paths must be non-empty"
         );
 
         Ok(entries)
@@ -1550,6 +1617,37 @@ mod tar_impl {
             Ok(Box::new(entries.into_iter()))
         }
 
+        fn list_matching_entries(
+            &mut self,
+            pattern: &crate::archive_path::ArchivePattern,
+        ) -> Result<Vec<String>> {
+            // Precondition assertions (Tiger Style: minimum 2 per function)
+            assert!(self.path.exists(), "Archive must exist");
+            assert!(self.path.is_file(), "Archive must be a file");
+
+            // Get all entries first using existing functionality
+            let all_entries = self.list_entries()?;
+
+            // Filter entries based on the pattern
+            let matching_entries: Vec<String> = all_entries
+                .into_iter()
+                .filter(|entry_path| pattern.matches(entry_path))
+                .collect();
+
+            // Postcondition assertions (Tiger Style: minimum 2 per function)
+            assert!(
+                matching_entries.len() <= MAX_ARCHIVE_ENTRIES,
+                "Matching entry count {} exceeds maximum {MAX_ARCHIVE_ENTRIES}",
+                matching_entries.len()
+            );
+            assert!(
+                matching_entries.iter().all(|path| !path.is_empty()),
+                "All matching entries have non-empty paths"
+            );
+
+            Ok(matching_entries)
+        }
+
         fn entry_count(&self) -> Result<ArchiveEntryCount> {
             self.entry_count()
         }
@@ -1993,6 +2091,40 @@ mod zip_impl {
             );
 
             Ok(Box::new(entries.into_iter()))
+        }
+
+        fn list_matching_entries(
+            &mut self,
+            pattern: &crate::archive_path::ArchivePattern,
+        ) -> Result<Vec<String>> {
+            // Precondition assertions (Tiger Style: minimum 2 per function)
+            assert!(self.path.exists(), "Archive must exist");
+            assert!(
+                self.archive.len() <= MAX_ARCHIVE_ENTRIES,
+                "Entry count within limits"
+            );
+
+            // Get all entries first using existing functionality
+            let all_entries = self.list_entries()?;
+
+            // Filter entries based on the pattern
+            let matching_entries: Vec<String> = all_entries
+                .into_iter()
+                .filter(|entry_path| pattern.matches(entry_path))
+                .collect();
+
+            // Postcondition assertions (Tiger Style: minimum 2 per function)
+            assert!(
+                matching_entries.len() <= MAX_ARCHIVE_ENTRIES,
+                "Matching entry count {} exceeds maximum {MAX_ARCHIVE_ENTRIES}",
+                matching_entries.len()
+            );
+            assert!(
+                matching_entries.iter().all(|path| !path.is_empty()),
+                "All matching entries have non-empty paths"
+            );
+
+            Ok(matching_entries)
         }
 
         fn entry_count(&self) -> Result<ArchiveEntryCount> {

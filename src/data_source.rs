@@ -559,8 +559,11 @@ mod tests {
         let archive_path = temp_dir.path().join("test.tar");
         std::fs::write(&archive_path, b"dummy archive").unwrap();
 
-        let components =
-            ArchivePathComponents::new(archive_path.clone(), "file.txt".to_string()).unwrap();
+        let components = ArchivePathComponents::new(
+            archive_path.clone(),
+            crate::archive_path::ArchivePattern::SpecificFile("file.txt".to_string()),
+        )
+        .unwrap();
 
         let result = DataSource::from_archive(&components);
         assert!(result.is_ok());

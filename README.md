@@ -6,8 +6,29 @@
 [![Release](https://github.com/nrminor/checkle/workflows/Release/badge.svg)](https://github.com/nrminor/checkle/actions/workflows/release.yml)
 [![Documentation](https://img.shields.io/badge/docs-mdbook-blue)](https://nrminor.github.io/checkle/)
 
-A `checksum` utility for the multicore era. It's so fast it will make you
-chuckle.
+A `checksum` utility for the multicore era.
+
+> [!WARNING]
+> `checkle` is an interesting but ultimately abandoned prototype. It rapidly
+> performs hashes and has an excellent UX, but for theoretical reasons, it is
+> guaranteed to produces different hashes for large files than canonical tools
+> like `md5sum` do. In an attempt to become a parallelized Merkle tree
+> implementation with MD5 and SHA256, `checkle` in some sense became its own
+> hashing algorithm. It can thus be used on its own like `md5sum`, e.g., hashing
+> a file on a source endpoint and verifying its transfer on a destination
+> endpoint, but on both endpoints, hashes will not match hashes produced by
+> `md5sum` or `sha256sum`.
+>
+> All this is to say, use at your own risk! Despite abandoning this prototype,
+> we learned a lot along the way, and viewers should feel free to peruse the
+> codebase for examples of how to do various things in Rust (e.g., SIMD
+> optimizations, features, `rayon` parallelism, property testing, etc.), how to
+> use justfiles to manage projects, how to set up Rust `mdbook` documentation
+> and CI/CD with github workflows, and how to corrale coding agents.
+>
+> Below is the original README. Please see
+> [this document](/context/CRITICAL_MERKLE_TREE_FAILURE_POSTMORTEM.md) for a detailed
+> post-mortem on the project. 
 
 ### Overview
 
@@ -37,20 +58,20 @@ directory traversal, multiple report formats, sophisticated logging, and more.
 - Equivalent but modernized user experience to `md5sum` or `sha2sum`
 - Each file is hashed in parallel chunks; in total, the time to check a single
   file will be close to a function of the file size divided by your number of
-  cores. And unlike other performant file integrity checkers, you don't need to
-  switch to a new hashing algorithm to benefit from this multicore speedup--your
-  legacy md5 or sha2 checksum files are fully compatible with `checkle`.
+  cores. ~~And unlike other performant file integrity checkers, you don't need
+  to switch to a new hashing algorithm to benefit from this multicore
+  speedup--your legacy md5 or sha2 checksum files are fully compatible with
+  `checkle`.~~
 - Many files throughout a file hierarchy can be hashed or checked recursively,
   with optional include or exclude filters to hash/verify just the files you're
   interested in
-- Support for running checks on files _within_ TAR and ZIP archives without
+- (Unfinished!) Support for running checks on files _within_ TAR and ZIP archives without
   extracting and decompressing files from them
 - Check successes and failures can be pretty-printed to standard output or
   written as CSV or JSON for your post-processing convenience
 - Multiple hashing algorithms including SHA2 and MD5 are supported, with support
   for more algorithms, e.g. BLAKE3, planned for the future
 - Sophisticated logging, helpful error messages, and a full test suite
-- A (planned) deterministic simulation testing engine to guarantee robustness
 
 ### Installation
 

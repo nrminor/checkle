@@ -35,6 +35,9 @@ fn run_main() -> Result<()> {
     preflight::setup(&cli.verbose, cli.threads)?;
     preflight::checks();
 
+    // Display critical warning about incompatibility
+    preflight::show_critical_warning();
+
     // Get the hashing algorithm
     let algo = &cli.algorithm;
 
@@ -178,6 +181,15 @@ mod preflight {
             s.spawn(|_| check_storage_type());
             s.spawn(|_| check_temp_directory());
         });
+    }
+
+    pub(super) fn show_critical_warning() {
+        warn!("⚠️  CRITICAL: DO NOT USE FOR STANDARD CHECKSUMS");
+        warn!("This project is an unsuccessful prototype that will produce different hashes");
+        warn!("than `md5sum` and `sha256sum` for all files larger than 1MB. `checkle` is thus");
+        warn!("incompatible with standard MD5/SHA256 checksum utilities.");
+        warn!("");
+        warn!("Please use standard time-tested tools like `md5sum` or `sha256sum` instead.");
     }
 
     fn setup_logger(verbosity: &Verbosity<WarnLevel>) -> Result<()> {

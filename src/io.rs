@@ -1,3 +1,91 @@
+//! High-performance I/O operations for bioinformatics file processing.
+//!
+//! This module provides the core I/O infrastructure that enables checkle to efficiently
+//! process terabyte-scale genomics datasets. It implements intelligent file discovery,
+//! batch processing, and archive handling optimized for the unique characteristics
+//! of bioinformatics workflows.
+//!
+//! # Architecture
+//!
+//! The module uses a multi-layered approach to handle the diverse file types and
+//! storage patterns common in genomics:
+//!
+//! 1. **File Discovery**: Recursive traversal with pattern matching for selective processing
+//! 2. **Batch Processing**: Memory-bounded collection to handle large directory trees
+//! 3. **Archive Integration**: Transparent access to compressed datasets (TAR, ZIP)
+//! 4. **Path Management**: Flexible display formatting for different output contexts
+//!
+//! # Performance Considerations
+//!
+//! - **Memory Management**: Bounded batch sizes prevent OOM on large datasets
+//! - **I/O Patterns**: Streaming access for archive files to minimize memory usage
+//! - **Filtering**: Early pattern matching reduces unnecessary file system operations
+//! - **Recursion Control**: Depth limits prevent stack overflow on deep hierarchies
+//!
+//! # Common Use Cases
+//!
+//! ## Genomics Data Processing
+//! ```no_run
+//! use checkle::io::{FileFilterConfig, collect_files, PathDisplayMode, format_path_for_display};
+//! use checkle::cli::Recursive;
+//! use std::path::Path;
+//!
+//! // Process all FASTQ files in a sequencing run directory
+//! let mut config = FileFilterConfig::new();
+//! config.include_patterns = vec!["*.fastq.gz".to_string(), "*.fq.gz".to_string()];
+//! config.exclude_patterns = vec!["**/temp/**".to_string(), "**/*.tmp".to_string()];
+//!
+//! let sequencing_dir = Path::new("/data/sequencing/run001");
+//! let files = collect_files(sequencing_dir, true, &config)
+//!     .expect("Failed to collect FASTQ files");
+//!
+//! // Display paths relative to working directory for clean output
+//! for file in files {
+//!     let display_path = format_path_for_display(&file, PathDisplayMode::Relative);
+//!     println!("Processing: {}", display_path);
+//! }
+//! ```
+//!
+//! ## Archive Processing
+//! ```no_run
+//! use checkle::io::{read_file_from_archive, FilesToCheck, FileHashPair};
+//! use checkle::archive_path::parse_archive_path;
+//!
+//! // Read a checksum file from within a compressed archive
+//! let archive_path = "backup.tar.gz:checksums/md5sums.txt";
+//! if let Some(components) = parse_archive_path(archive_path) {
+//!     let content = read_file_from_archive(&components)
+//!         .expect("Failed to read from archive");
+//!     
+//!     // Process the checksum data
+//!     println!("Found {} bytes of checksum data", content.len());
+//! }
+//! ```
+//!
+//! ## Batch File Processing
+//! ```no_run
+//! use checkle::io::{FilesToCheck, FileHashPair};
+//! use std::path::PathBuf;
+//!
+//! // Build a collection of files with expected hashes for verification
+//! let mut files_to_check = FilesToCheck::new();
+//!
+//! let genome_file = PathBuf::from("reference_genome.fasta.gz");
+//! let expected_hash = "a1b2c3d4e5f6789...".to_string();
+//! let pair = FileHashPair::new(genome_file, expected_hash);
+//! files_to_check.push(pair);
+//!
+//! println!("Prepared {} files for verification", files_to_check.len());
+//! ```
+//!
+//! # Implementation Details
+//!
+//! The module integrates with the `ignore` crate for efficient directory traversal
+//! while respecting `.gitignore` patterns. Archive handling is feature-gated and
+//! supports both TAR and ZIP formats commonly used for genomics data distribution.
+//! Path formatting handles both standard filesystem paths and archive-internal paths
+//! with special syntax (e.g., `archive.tar:internal/path`).
+
 use crate::{
     archive::ArchiveReader,
     archive_path::{ArchivePathComponents, parse_archive_path},
@@ -15,23 +103,66 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Configuration for file filtering using include/exclude patterns.
+/// Configuration for file filtering using include/exclude patterns optimized for bioinformatics workflows.
 ///
-/// This struct encapsulates glob patterns for including or excluding files
-/// during directory traversal. Patterns follow gitignore syntax where:
-/// - Include patterns match files to be processed
-/// - Exclude patterns match files to be skipped
-/// - The `no_ignore` flag controls whether .gitignore files are respected
+/// This struct encapsulates glob patterns for selective file processing during directory
+/// traversal, with special considerations for genomics data patterns. Patterns follow
+/// gitignore syntax with bioinformatics-specific optimizations:
+///
+/// - **Include patterns**: Whitelist files to be processed (e.g., `*.fastq.gz`, `*.bam`)
+/// - **Exclude patterns**: Blacklist files to be skipped (e.g., `**/temp/**`, `*.tmp`)
+/// - **Ignore handling**: Controls whether `.gitignore` files are respected
+/// - **Batch limits**: Prevents memory exhaustion on large genomics datasets
+///
+/// The filtering system is designed to handle common bioinformatics scenarios like
+/// processing only specific file types from large sequencing runs while avoiding
+/// temporary files and intermediate processing artifacts.
+///
+/// # Arguments
+///
+/// * `include_patterns` - Glob patterns to whitelist (empty means include all)
+/// * `exclude_patterns` - Glob patterns to blacklist (takes precedence over include)
+/// * `no_ignore` - Whether to ignore `.gitignore` files during traversal
+/// * `max_files_batch` - Maximum files to process in a single batch
 ///
 /// # Examples
 ///
-/// ```
+/// ## Basic Genomics File Filtering
+/// ```no_run
 /// use checkle::io::FileFilterConfig;
 ///
+/// // Process only FASTQ files from a sequencing run
 /// let mut config = FileFilterConfig::new();
-/// config.include_patterns = vec!["*.rs".to_string(), "src/**/*.txt".to_string()];
-/// config.exclude_patterns = vec!["*.test.rs".to_string(), "**/target/**".to_string()];
-/// config.no_ignore = false;
+/// config.include_patterns = vec![
+///     "*.fastq.gz".to_string(),
+///     "*.fq.gz".to_string(),
+///     "*.fastq".to_string(),
+/// ];
+/// config.exclude_patterns = vec![
+///     "**/temp/**".to_string(),
+///     "**/*.tmp".to_string(),
+///     "**/backup/**".to_string(),
+/// ];
+/// ```
+///
+/// ## Multi-format Genomics Processing
+/// ```no_run
+/// use checkle::io::FileFilterConfig;
+///
+/// // Process multiple genomics file formats
+/// let mut config = FileFilterConfig::new();
+/// config.include_patterns = vec![
+///     "*.bam".to_string(),        // Binary alignment files
+///     "*.vcf.gz".to_string(),     // Compressed variant calls
+///     "*.fasta.gz".to_string(),   // Compressed reference sequences
+///     "*.gff3".to_string(),       // Gene annotations
+/// ];
+/// config.exclude_patterns = vec![
+///     "**/*.bai".to_string(),     // Skip BAM index files
+///     "**/*.tbi".to_string(),     // Skip Tabix index files
+///     "**/QC/**".to_string(),     // Skip quality control outputs
+/// ];
+/// config.max_files_batch = 1000;  // Limit for memory management
 /// ```
 #[derive(Debug, Clone)]
 pub struct FileFilterConfig {
@@ -163,6 +294,76 @@ impl FileFilterConfig {
     }
 }
 
+/// Memory-managed collection of file-hash pairs for batch verification in genomics workflows.
+///
+/// This struct provides a type-safe wrapper around file-hash pairs with built-in memory
+/// management for processing large genomics datasets. It's designed to handle common
+/// bioinformatics scenarios where thousands of files need hash verification while
+/// preventing memory exhaustion through bounded batch processing.
+///
+/// The collection enforces invariants through Tiger Style assertions and provides
+/// methods optimized for genomics data patterns, including support for archive paths
+/// and streaming verification workflows.
+///
+/// # Memory Management
+///
+/// The collection is designed to work with configurable batch limits to prevent
+/// out-of-memory conditions when processing terabyte-scale genomics datasets.
+/// Batch size limits are enforced at the collection level to ensure predictable
+/// memory usage.
+///
+/// # Use Cases
+///
+/// - **Checksum Verification**: Batch verification of downloaded genomics files
+/// - **Data Integrity**: Validation of file transfers and storage systems
+/// - **Pipeline Quality Control**: Ensuring data integrity between processing steps
+/// - **Archive Processing**: Handling compressed datasets with embedded checksums
+///
+/// # Examples
+///
+/// ## Basic Verification Workflow
+/// ```no_run
+/// use checkle::io::{FilesToCheck, FileHashPair};
+/// use std::path::PathBuf;
+///
+/// // Create collection for genomics files
+/// let mut files_to_verify = FilesToCheck::new();
+///
+/// // Add reference genome
+/// let genome_path = PathBuf::from("GRCh38.fasta.gz");
+/// let genome_hash = "a1b2c3d4e5f6...".to_string();
+/// let genome_pair = FileHashPair::new(genome_path, genome_hash);
+/// files_to_verify.push(genome_pair);
+///
+/// // Add sequencing data
+/// let fastq_path = PathBuf::from("sample_R1.fastq.gz");
+/// let fastq_hash = "7f8e9d0c1b2a...".to_string();
+/// let fastq_pair = FileHashPair::new(fastq_path, fastq_hash);
+/// files_to_verify.push(fastq_pair);
+///
+/// println!("Prepared {} files for verification", files_to_verify.len());
+/// ```
+///
+/// ## Batch Processing from Checksum File
+/// ```no_run
+/// use checkle::io::{FilesToCheck, FileHashPair};
+/// use std::path::PathBuf;
+///
+/// // Process multiple files from a checksum manifest
+/// let checksum_data = vec![
+///     ("sample1.bam".to_string(), "hash1".to_string()),
+///     ("sample2.bam".to_string(), "hash2".to_string()),
+///     ("sample3.bam".to_string(), "hash3".to_string()),
+/// ];
+///
+/// let pairs: Vec<FileHashPair> = checksum_data
+///     .into_iter()
+///     .map(|(path, hash)| FileHashPair::new(PathBuf::from(path), hash))
+///     .collect();
+///
+/// let files_to_check = FilesToCheck::from_vec(pairs);
+/// println!("Loaded {} files for batch verification", files_to_check.len());
+/// ```
 pub struct FilesToCheck(Vec<FileHashPair>);
 
 impl FilesToCheck {
@@ -257,6 +458,82 @@ impl Default for FilesToCheck {
     }
 }
 
+/// Validated pairing of a genomics file path with its expected cryptographic hash.
+///
+/// This struct represents a verified association between a file path and its expected
+/// hash value, with strict validation for bioinformatics data integrity workflows.
+/// It enforces data quality through Tiger Style preconditions and supports both
+/// standard filesystem paths and archive-internal paths for compressed genomics datasets.
+///
+/// The hash validation ensures only hexadecimal strings are accepted, preventing
+/// common input errors in checksum verification workflows. File existence is validated
+/// for standard paths, while archive paths are handled specially to support compressed
+/// genomics data distributions.
+///
+/// # Fields
+///
+/// * `file` - Path to the genomics file (filesystem or archive-internal)
+/// * `hash` - Expected cryptographic hash (MD5, SHA256, etc.) as hexadecimal string
+///
+/// # Use Cases in Genomics
+///
+/// - **Reference Data Validation**: Ensuring genome assemblies match expected checksums
+/// - **Sequencing Quality Control**: Validating FASTQ files after data transfer
+/// - **Analysis Pipeline**: Checking intermediate files between processing steps  
+/// - **Data Distribution**: Verifying downloaded public datasets (NCBI, EBI, etc.)
+/// - **Archive Processing**: Handling compressed genomics datasets with embedded manifests
+///
+/// # Examples
+///
+/// ## Standard Genomics File Verification
+/// ```no_run
+/// use checkle::io::FileHashPair;
+/// use std::path::PathBuf;
+///
+/// // Verify a reference genome file
+/// let genome_file = PathBuf::from("GRCh38.fasta.gz");
+/// let expected_md5 = "a1b2c3d4e5f67890abcdef1234567890".to_string();
+/// let pair = FileHashPair::new(genome_file, expected_md5);
+///
+/// println!("Validating: {}", pair.file().display());
+/// println!("Expected MD5: {}", pair.hash());
+/// ```
+///
+/// ## Sequencing Data Processing
+/// ```no_run
+/// use checkle::io::FileHashPair;
+/// use std::path::PathBuf;
+///
+/// // Process FASTQ files with SHA256 checksums
+/// let fastq_files = vec![
+///     ("sample_R1.fastq.gz", "abc123def456..."),
+///     ("sample_R2.fastq.gz", "789xyz012uvw..."),
+///     ("sample_I1.fastq.gz", "345qrs678tuv..."),
+/// ];
+///
+/// let pairs: Vec<FileHashPair> = fastq_files
+///     .into_iter()
+///     .map(|(path, hash)| {
+///         FileHashPair::new(PathBuf::from(path), hash.to_string())
+///     })
+///     .collect();
+///
+/// println!("Created {} file-hash pairs for verification", pairs.len());
+/// ```
+///
+/// ## Archive-based Genomics Data
+/// ```no_run
+/// use checkle::io::FileHashPair;
+/// use std::path::PathBuf;
+///
+/// // Handle files within compressed archives (special constructor)
+/// let archive_path = PathBuf::from("dataset.tar.gz:samples/sample1.bam");
+/// let archive_hash = "fedcba0987654321...".to_string();
+/// let archive_pair = FileHashPair::new_unchecked(archive_path, archive_hash);
+///
+/// // Archive paths use special syntax that bypasses filesystem checks
+/// println!("Archive entry: {}", archive_pair.file().display());
+/// ```
 #[derive(Debug, Clone)]
 pub struct FileHashPair {
     file: PathBuf,
@@ -576,26 +853,104 @@ impl FilesToCheck {
     }
 }
 
-/// Public function to read a file from within an archive.
+/// Reads a file from within a compressed genomics archive with streaming access.
+///
+/// This function provides efficient access to files embedded within TAR and ZIP archives
+/// commonly used for genomics data distribution. It supports both uncompressed and
+/// compressed archives (`.tar.gz`, `.tar.bz2`, `.zip`) while maintaining memory
+/// efficiency through streaming I/O.
+///
+/// The function is optimized for bioinformatics workflows where large datasets are
+/// distributed as compressed archives containing multiple related files (e.g.,
+/// checksum manifests, metadata files, small reference files).
+///
+/// # Supported Archive Formats
+///
+/// - **TAR archives**: `.tar`, `.tar.gz`, `.tar.bz2` (feature: `tar`)
+/// - **ZIP archives**: `.zip` (feature: `zip`)
 ///
 /// # Arguments
 ///
-/// * `archive_components` - Parsed archive path components
+/// * `archive_components` - Parsed archive path components containing:
+///   - `archive()` - Path to the archive file on filesystem
+///   - `entry()` - Internal path to the file within the archive
 ///
 /// # Returns
 ///
-/// Returns the content of the file as a String.
+/// Returns the complete file content as a UTF-8 string. The content is read
+/// entirely into memory, so this function is best suited for small files
+/// like checksum manifests, metadata, and configuration files.
 ///
 /// # Errors
 ///
 /// Returns an error if:
-/// - The archive cannot be opened
-/// - The file cannot be found within the archive
-/// - I/O errors occur while reading
+/// - The archive file cannot be opened or read
+/// - The requested entry cannot be found within the archive
+/// - I/O errors occur while reading the archive or entry
+/// - The archive format is not supported or enabled
+/// - Content cannot be decoded as valid UTF-8
 ///
 /// # Panics
 ///
-/// Panics if the entry path is empty (Tiger Style assertion).
+/// Panics if precondition checks fail:
+/// - Archive file doesn't exist on the filesystem
+/// - Entry path is empty or invalid
+///
+/// # Examples
+///
+/// ## Reading Checksum Manifests
+/// ```no_run
+/// use checkle::io::read_file_from_archive;
+/// use checkle::archive_path::parse_archive_path;
+///
+/// // Read MD5 checksum file from genomics data archive
+/// let archive_path = "TCGA-BRCA-samples.tar.gz:checksums/md5sums.txt";
+/// if let Some(components) = parse_archive_path(archive_path) {
+///     let checksum_content = read_file_from_archive(&components)
+///         .expect("Failed to read checksum manifest");
+///     
+///     // Process the checksum data
+///     for line in checksum_content.lines() {
+///         if let Some((hash, filename)) = line.split_once("  ") {
+///             println!("Found checksum for {}: {}", filename, hash);
+///         }
+///     }
+/// }
+/// ```
+///
+/// ## Reading Metadata Files
+/// ```no_run
+/// use checkle::io::read_file_from_archive;
+/// use checkle::archive_path::parse_archive_path;
+///
+/// // Extract sample metadata from research dataset
+/// let archive_path = "study-data.zip:metadata/samples.json";
+/// if let Some(components) = parse_archive_path(archive_path) {
+///     let metadata_json = read_file_from_archive(&components)
+///         .expect("Failed to read metadata");
+///     
+///     // Process JSON metadata
+///     println!("Metadata size: {} bytes", metadata_json.len());
+/// }
+/// ```
+///
+/// ## Reading Small Reference Files
+/// ```no_run
+/// use checkle::io::read_file_from_archive;
+/// use checkle::archive_path::parse_archive_path;
+///
+/// // Read gene annotation file from compressed reference
+/// let archive_path = "reference-genome.tar.bz2:annotations/genes.gff";
+/// if let Some(components) = parse_archive_path(archive_path) {
+///     let gff_content = read_file_from_archive(&components)
+///         .expect("Failed to read gene annotations");
+///     
+///     let gene_count = gff_content.lines()
+///         .filter(|line| line.split('\t').nth(2) == Some("gene"))
+///         .count();
+///     println!("Found {} gene annotations", gene_count);
+/// }
+/// ```
 pub fn read_file_from_archive(
     archive_components: &ArchivePathComponents,
 ) -> Result<String, CheckleError> {
@@ -761,34 +1116,133 @@ fn check_file_availability(
     Ok(false)
 }
 
-/// Collects file paths based on the input path with optional recursive traversal and filtering.
+/// Discovers and collects genomics files with intelligent filtering for bioinformatics workflows.
 ///
-/// If the input is a wildcard ("*", "./*", "./", "."), returns files based on recursive flag.
-/// If recursive is true and input is a directory, uses ignore crate for efficient traversal.
-/// Otherwise, returns the single input file. File filtering is applied based on the provided
-/// filter configuration.
+/// This function provides the core file discovery engine for checkle, optimized for genomics
+/// datasets with support for selective processing, batch size limits, and archive path handling.
+/// It intelligently handles common bioinformatics scenarios including:
+///
+/// - **Single files**: Direct processing of individual genomics files
+/// - **Directory traversal**: Recursive or non-recursive directory scanning
+/// - **Pattern matching**: Include/exclude patterns for selective file processing  
+/// - **Archive paths**: Special handling for compressed dataset references
+/// - **Wildcard expansion**: Support for shell-like wildcards (`*`, `./`, etc.)
+/// - **Batch limits**: Memory-bounded collection to prevent OOM on large datasets
+///
+/// The function integrates with the `ignore` crate for efficient traversal while respecting
+/// `.gitignore` patterns, making it suitable for development environments and production
+/// pipelines alike.
+///
+/// # File Discovery Modes
+///
+/// 1. **Single File**: Returns the input file directly
+/// 2. **Directory (Non-recursive)**: Lists files in the immediate directory
+/// 3. **Directory (Recursive)**: Traverses subdirectories using ignore crate
+/// 4. **Wildcard**: Expands wildcards based on current directory
+/// 5. **Archive Path**: Returns archive path for downstream processing
 ///
 /// # Arguments
 ///
-/// * `input` - The input path (file, directory, or wildcard)
+/// * `input` - Input path specifying what to collect:
+///   - Single file path (e.g., `sample.fastq.gz`)
+///   - Directory path (e.g., `/data/sequencing/run001`)
+///   - Wildcard pattern (e.g., `*`, `./`, `./fastq/*`)
+///   - Archive path (e.g., `dataset.tar.gz:checksums/md5sums.txt`)
 /// * `recursive` - Whether to traverse directories recursively
-/// * `filter_config` - Configuration for include/exclude patterns and .gitignore handling
+/// * `filter_config` - File filtering configuration with include/exclude patterns
+///
+/// # Returns
+///
+/// Returns a vector of file paths that match the discovery criteria. For archive paths,
+/// returns the archive path itself for downstream archive handling.
 ///
 /// # Errors
 ///
 /// Returns an error if:
-/// - Unable to get the current directory (for wildcards)
-/// - Unable to read the directory contents
-/// - Walk builder encounters an error during traversal
-/// - Invalid glob patterns in filter configuration
+/// - Unable to access the current working directory (for wildcards)
+/// - Directory read operations fail due to permissions or I/O errors
+/// - File system traversal encounters unrecoverable errors
+/// - Invalid glob patterns are specified in filter configuration
+/// - Collected file count exceeds configured batch size limits
 ///
 /// # Panics
 ///
-/// Panics if:
-/// - The input path doesn't exist and isn't a recognized wildcard
-/// - A single file input is not a regular file
-/// - The number of collected files exceeds `MAX_FILES_IN_BATCH` (10,000)
-/// - Any postcondition check fails
+/// Panics if precondition checks fail (Tiger Style assertions):
+/// - Input path doesn't exist and isn't a recognized wildcard or archive path
+/// - Single file input is not a regular file (when verified)
+/// - Collected file count exceeds `MAX_FILES_IN_BATCH` safety limit
+/// - Any postcondition invariants are violated
+///
+/// # Examples
+///
+/// ## Single File Processing
+/// ```no_run
+/// use checkle::io::{collect_files, FileFilterConfig};
+/// use checkle::cli::Recursive;
+/// use std::path::Path;
+///
+/// // Process a single FASTQ file
+/// let file_path = Path::new("sample_R1.fastq.gz");
+/// let config = FileFilterConfig::new();
+/// let files = collect_files(file_path, false, &config)
+///     .expect("Failed to collect file");
+///
+/// assert_eq!(files.len(), 1);
+/// println!("Processing: {}", files[0].display());
+/// ```
+///
+/// ## Directory Traversal with Filtering
+/// ```no_run
+/// use checkle::io::{collect_files, FileFilterConfig};
+/// use checkle::cli::Recursive;
+/// use std::path::Path;
+///
+/// // Collect all BAM files recursively, excluding index files
+/// let mut config = FileFilterConfig::new();
+/// config.include_patterns = vec!["*.bam".to_string()];
+/// config.exclude_patterns = vec!["*.bai".to_string(), "**/temp/**".to_string()];
+///
+/// let data_dir = Path::new("/data/alignments");
+/// let bam_files = collect_files(data_dir, true, &config)
+///     .expect("Failed to collect BAM files");
+///
+/// println!("Found {} BAM files for processing", bam_files.len());
+/// ```
+///
+/// ## Wildcard Processing
+/// ```no_run
+/// use checkle::io::{collect_files, FileFilterConfig};
+/// use checkle::cli::Recursive;
+/// use std::path::Path;
+///
+/// // Process all files in current directory matching patterns
+/// let mut config = FileFilterConfig::new();
+/// config.include_patterns = vec!["*.fastq.gz".to_string(), "*.fq.gz".to_string()];
+///
+/// let wildcard = Path::new("*");
+/// let fastq_files = collect_files(wildcard, false, &config)
+///     .expect("Failed to expand wildcard");
+///
+/// for file in &fastq_files {
+///     println!("Found FASTQ: {}", file.display());
+/// }
+/// ```
+///
+/// ## Archive Path Handling
+/// ```no_run
+/// use checkle::io::{collect_files, FileFilterConfig};
+/// use checkle::cli::Recursive;
+/// use std::path::Path;
+///
+/// // Handle archive path - returns path for downstream processing
+/// let archive_path = Path::new("dataset.tar.gz:checksums/md5sums.txt");
+/// let config = FileFilterConfig::new();
+/// let paths = collect_files(archive_path, false, &config)
+///     .expect("Failed to handle archive path");
+///
+/// assert_eq!(paths.len(), 1);
+/// println!("Archive path: {}", paths[0].display());
+/// ```
 pub fn collect_files(
     input: &Path,
     recursive: Recursive,
@@ -1006,12 +1460,76 @@ fn collect_files_recursive(
 // Path Display Utilities
 // ============================================================================
 
-/// Controls how file paths are displayed in output
+/// Path formatting mode for genomics file output display.
+///
+/// This enum controls how file paths are formatted in checksum output and logging,
+/// optimized for bioinformatics workflows where path readability and consistency
+/// are crucial for data provenance and reproducibility.
+///
+/// Different display modes serve different use cases in genomics pipelines:
+/// - **Relative paths** improve readability in local development and testing
+/// - **Absolute paths** ensure reproducibility in production pipelines and HPC environments
+/// - **Archive paths** preserve special syntax for compressed datasets
+///
+/// # Variants
+///
+/// * `Relative` - Display paths relative to current working directory (default)
+/// * `Absolute` - Display full absolute paths for unambiguous file references
+///
+/// # Examples
+///
+/// ## Interactive Development
+/// ```no_run
+/// use checkle::io::{PathDisplayMode, format_path_for_display};
+/// use std::path::Path;
+///
+/// // Relative paths for clean output during development
+/// let file_path = Path::new("/home/user/genomics/sample.fastq.gz");
+/// let display_path = format_path_for_display(file_path, PathDisplayMode::Relative);
+///
+/// // Output: "genomics/sample.fastq.gz" (assuming current dir is /home/user)
+/// println!("Processing: {}", display_path);
+/// ```
+///
+/// ## Production Pipelines
+/// ```no_run
+/// use checkle::io::{PathDisplayMode, format_path_for_display};
+/// use std::path::Path;
+///
+/// // Absolute paths for unambiguous references in HPC environments
+/// let file_path = Path::new("reference.fasta");
+/// let display_path = format_path_for_display(file_path, PathDisplayMode::Absolute);
+///
+/// // Output: "/cluster/data/genomes/reference.fasta"
+/// println!("Verified: {}", display_path);
+/// ```
+///
+/// ## Archive Processing
+/// ```no_run
+/// use checkle::io::{PathDisplayMode, format_path_for_display};
+/// use std::path::Path;
+///
+/// // Archive paths are preserved regardless of display mode
+/// let archive_path = Path::new("dataset.tar.gz:samples/sample1.bam");
+/// let display_path = format_path_for_display(archive_path, PathDisplayMode::Relative);
+///
+/// // Output: "dataset.tar.gz:samples/sample1.bam" (unchanged)
+/// println!("Archive entry: {}", display_path);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathDisplayMode {
-    /// Display paths relative to the current working directory (default)
+    /// Display paths relative to the current working directory (default).
+    ///
+    /// This mode creates cleaner, more readable output for interactive use and local
+    /// development. Paths are calculated relative to the current working directory,
+    /// making output more concise when working within a project structure.
     Relative,
-    /// Display absolute paths
+
+    /// Display absolute paths for unambiguous file references.
+    ///
+    /// This mode ensures complete path information is preserved, which is essential
+    /// for production pipelines, HPC environments, and scenarios where the working
+    /// directory may change between operations.
     Absolute,
 }
 
@@ -1027,22 +1545,109 @@ impl PathDisplayMode {
     }
 }
 
-/// Format a path for display according to the specified mode.
+/// Formats file paths for consistent display in genomics workflow outputs.
+///
+/// This function provides standardized path formatting for checksum outputs, logging,
+/// and user interfaces in bioinformatics workflows. It handles the complex path
+/// formatting requirements of genomics pipelines while preserving the special syntax
+/// used for archive-internal paths.
+///
+/// The function is designed to improve readability and reproducibility in different
+/// deployment contexts:
+/// - **Development environments**: Relative paths for clean, readable output
+/// - **Production pipelines**: Absolute paths for unambiguous file references
+/// - **HPC environments**: Consistent formatting across different working directories
+/// - **Archive processing**: Preserves special archive syntax unchanged
+///
+/// # Path Types Handled
+///
+/// 1. **Standard filesystem paths**: Converted between relative/absolute as requested
+/// 2. **Archive paths**: Preserved unchanged (format: `archive.tar:internal/path`)
+/// 3. **Non-existent paths**: Best-effort formatting with graceful fallbacks
+/// 4. **Cross-platform paths**: Handles platform-specific path separators
 ///
 /// # Arguments
 ///
-/// * `path` - The path to format
-/// * `mode` - Whether to display as relative or absolute
+/// * `path` - The file path to format (filesystem or archive path)
+/// * `mode` - Display mode controlling relative vs. absolute formatting
 ///
 /// # Returns
 ///
-/// A string representation of the path formatted according to the mode.
-/// If the path is an archive path (contains ':'), it is returned unchanged.
-/// If relative path calculation fails, falls back to the absolute path.
+/// Returns a formatted string representation of the path:
+/// - **Relative mode**: Path relative to current working directory (when possible)
+/// - **Absolute mode**: Full absolute path for unambiguous reference
+/// - **Archive paths**: Returned unchanged regardless of mode
+/// - **Fallback**: Original path string if formatting operations fail
 ///
-/// # Panics
+/// # Error Handling
 ///
-/// This function should not panic under normal circumstances.
+/// This function uses graceful error handling and never panics:
+/// - If current directory cannot be determined, returns original path
+/// - If relative path calculation fails, falls back to absolute path
+/// - If absolute path conversion fails, returns original path
+/// - Archive paths are always returned as-is for safety
+///
+/// # Examples
+///
+/// ## Development Workflow
+/// ```no_run
+/// use checkle::io::{format_path_for_display, PathDisplayMode};
+/// use std::path::Path;
+///
+/// // Working in /home/user/genomics-project
+/// let file_path = Path::new("/home/user/genomics-project/data/sample.fastq.gz");
+/// let display_path = format_path_for_display(file_path, PathDisplayMode::Relative);
+///
+/// // Output: "data/sample.fastq.gz" (clean, readable)
+/// println!("Processing: {}", display_path);
+/// ```
+///
+/// ## Production Pipeline
+/// ```no_run
+/// use checkle::io::{format_path_for_display, PathDisplayMode};
+/// use std::path::Path;
+///
+/// // HPC environment with changing working directories
+/// let file_path = Path::new("reference.fasta");
+/// let display_path = format_path_for_display(file_path, PathDisplayMode::Absolute);
+///
+/// // Output: "/cluster/data/genomes/reference.fasta" (unambiguous)
+/// println!("Verified: {}", display_path);
+/// ```
+///
+/// ## Archive Path Preservation
+/// ```no_run
+/// use checkle::io::{format_path_for_display, PathDisplayMode};
+/// use std::path::Path;
+///
+/// // Archive paths are preserved regardless of mode
+/// let archive_path = Path::new("dataset.tar.gz:samples/sample1.bam");
+/// let relative_display = format_path_for_display(archive_path, PathDisplayMode::Relative);
+/// let absolute_display = format_path_for_display(archive_path, PathDisplayMode::Absolute);
+///
+/// // Both output: "dataset.tar.gz:samples/sample1.bam" (unchanged)
+/// assert_eq!(relative_display, absolute_display);
+/// println!("Archive entry: {}", relative_display);
+/// ```
+///
+/// ## Batch File Processing
+/// ```no_run
+/// use checkle::io::{format_path_for_display, PathDisplayMode};
+/// use std::path::{Path, PathBuf};
+///
+/// // Format multiple genomics files for consistent output
+/// let files = vec![
+///     PathBuf::from("/data/fastq/sample1_R1.fastq.gz"),
+///     PathBuf::from("/data/fastq/sample1_R2.fastq.gz"),
+///     PathBuf::from("/data/bam/sample1.bam"),
+/// ];
+///
+/// println!("Files to process:");
+/// for file in &files {
+///     let display_path = format_path_for_display(file, PathDisplayMode::Relative);
+///     println!("  - {}", display_path);
+/// }
+/// ```
 #[must_use]
 pub fn format_path_for_display(path: &Path, mode: PathDisplayMode) -> String {
     let path_str = path.to_string_lossy();

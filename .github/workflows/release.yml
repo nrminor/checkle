@@ -135,37 +135,38 @@ Choose SIMD binaries if your CPU supports AVX2 (Intel/AMD from 2013+) or NEON (a
             rustflags: "-C target-feature=+neon"
             suffix: "-simd"
           
-          # Windows x86_64 - Standard
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive: zip
-            features: ""
-            rustflags: ""
-            suffix: ""
-          
-          # Windows x86_64 - SIMD
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive: zip
-            features: "simd"
-            rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
-            suffix: "-simd"
-          
-          # Windows ARM64 - Standard
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            archive: zip
-            features: ""
-            rustflags: ""
-            suffix: ""
-          
-          # Windows ARM64 - SIMD
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            archive: zip
-            features: "simd"
-            rustflags: "-C target-feature=+neon"
-            suffix: "-simd"
+          # Windows builds commented out due to compatibility issues
+          # # Windows x86_64 - Standard
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   archive: zip
+          #   features: ""
+          #   rustflags: ""
+          #   suffix: ""
+          # 
+          # # Windows x86_64 - SIMD
+          # - os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          #   archive: zip
+          #   features: "simd"
+          #   rustflags: "-C target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+avx,+avx2"
+          #   suffix: "-simd"
+          # 
+          # # Windows ARM64 - Standard
+          # - os: windows-latest
+          #   target: aarch64-pc-windows-msvc
+          #   archive: zip
+          #   features: ""
+          #   rustflags: ""
+          #   suffix: ""
+          # 
+          # # Windows ARM64 - SIMD
+          # - os: windows-latest
+          #   target: aarch64-pc-windows-msvc
+          #   archive: zip
+          #   features: "simd"
+          #   rustflags: "-C target-feature=+neon"
+          #   suffix: "-simd"
 
     steps:
       - uses: actions/checkout@v4

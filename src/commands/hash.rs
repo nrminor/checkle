@@ -1,6 +1,7 @@
 #![allow(clippy::print_stdout)]
 
 use crate::{
+    archive::Archive,
     archive_path,
     cli::{AbsolutePaths, NoIgnore, NoProgress, OutputFormat, PerFileMode, PrettyPrint, Recursive},
     errors::{CheckleError, Result},
@@ -177,74 +178,151 @@ impl HashConfig<'_> {
         self.hash_regular_files(&filter_config)
     }
 
-    /// Hash a single archive entry using archive path syntax.
+    /// Hash archive entries using archive path syntax with pattern support.
+    #[allow(clippy::too_many_lines)] // Function orchestrates several operations
     fn hash_single_archive_entry(&self) -> Result<()> {
-        // Archive path - hash single entry using DataSource
-        let source = create_data_source_from_path(self.input_file)?;
+        // Parse archive path components
+        let input_file_str = self.input_file.to_string_lossy();
+        let archive_components =
+            archive_path::parse_archive_path(&input_file_str).ok_or_else(|| {
+                CheckleError::InvalidCliArgument(format!(
+                    "Invalid archive path syntax: {input_file_str}"
+                ))
+            })?;
+
+        // Open archive for pattern matching
+        let mut archive = Archive::open(archive_components.archive())?;
+
+        // Get matching entries based on pattern
+        let matching_entries = archive.list_matching_entries(archive_components.pattern())?;
+
+        // For specific file patterns, if nothing matches, return an error
+        if matching_entries.is_empty()
+            && let archive_path::ArchivePattern::SpecificFile(path) = archive_components.pattern()
+        {
+            return Err(CheckleError::ArchiveEntryNotFound {
+                archive: archive_components.archive().to_path_buf(),
+                entry: path.clone(),
+            });
+        }
+        assert!(
+            matching_entries.len() <= crate::constants::MAX_FILES_IN_BATCH,
+            "Matching entries {} should not exceed batch limit {}",
+            matching_entries.len(),
+            crate::constants::MAX_FILES_IN_BATCH
+        );
+
+        if matching_entries.is_empty() {
+            println!(
+                "No entries found matching pattern: {}",
+                archive_components.pattern().as_str()
+            );
+            return Ok(());
+        }
+
+        // Hash each matching entry
+        let mut file_hash_pairs = Vec::with_capacity(matching_entries.len());
         let chunk_size_kb = convert_chunk_size_kb(self.chunk_size_kb);
 
-        let hash = source.hash(
-            self.algo,
-            chunk_size_kb,
-            self.parallel_readers,
-            None::<fn(u64)>,
-        )?;
+        // Initialize progress tracking if enabled
+        let show_progress = !self.no_progress && matching_entries.len() > 1;
+        let progress_manager = ProgressManager::new(show_progress, matching_entries.len());
 
-        // Create result with archive metadata if possible, otherwise use fallback
-        let result = if let Some(fs_path) = source.as_path() {
-            if let Ok(metadata) = std::fs::metadata(fs_path) {
-                FileHashPairWithMetadata::new(
-                    self.input_file.to_path_buf(),
-                    hash.clone(),
-                    &metadata,
-                )?
-            } else {
-                FileHashPairWithMetadata::new_with_fallback(
-                    self.input_file.to_path_buf(),
-                    hash.clone(),
-                )?
-            }
-        } else {
-            // Archive source - use fallback (no filesystem metadata)
-            FileHashPairWithMetadata::new_with_fallback(
-                self.input_file.to_path_buf(),
-                hash.clone(),
-            )?
-        };
+        for entry_path in &matching_entries {
+            // Create archive path for this specific entry
+            let archive_entry_path =
+                format!("{}:{}", archive_components.archive().display(), entry_path);
+            let entry_path_buf = PathBuf::from(&archive_entry_path);
 
-        let file_hash_pairs = vec![result];
+            // Create data source for this entry
+            let source = create_data_source_from_path(&entry_path_buf)?;
 
-        // Handle output
-        if self.per_file {
-            // Write per-file hash for the single archive entry
-            write_per_file_hash(self.input_file, &hash, self.algo)?;
-        } else if let Some(output_path) = self.hash_output {
-            let output_format = self.format.unwrap_or(OutputFormat::Text);
-            let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
-            let formatted_output = format_output_with_pretty(
-                &convert_to_basic_pairs(file_hash_pairs.clone()),
-                output_format,
-                self.pretty,
-                path_mode,
-            );
-            std::fs::write(output_path, formatted_output).map_err(|e| {
-                CheckleError::FileOpenError {
-                    path: output_path.to_path_buf(),
-                    source: e,
+            // Create per-file progress if the file is large enough
+            let file_size = 0; // We don't know the size beforehand for archive entries
+            let file_progress =
+                progress_manager.create_file_progress(&archive_entry_path, file_size);
+
+            let hash = match file_progress {
+                Some(progress) => {
+                    // With progress callback
+                    source.hash(
+                        self.algo,
+                        chunk_size_kb,
+                        self.parallel_readers,
+                        Some(move |bytes_read| {
+                            progress.update(bytes_read);
+                        }),
+                    )
                 }
-            })?;
-        } else if self.pretty {
-            display_pretty_table(&file_hash_pairs)?;
-        } else {
-            let output_format = self.format.unwrap_or(OutputFormat::Text);
-            let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
-            let formatted_output = format_output_with_pretty(
-                &convert_to_basic_pairs(file_hash_pairs),
-                output_format,
-                false,
-                path_mode,
-            );
-            println!("{formatted_output}");
+                None => {
+                    // Without progress callback
+                    source.hash(
+                        self.algo,
+                        chunk_size_kb,
+                        self.parallel_readers,
+                        None::<fn(u64)>,
+                    )
+                }
+            }?;
+
+            // Create result with archive metadata (use fallback since it's an archive entry)
+            let result =
+                FileHashPairWithMetadata::new_with_fallback(entry_path_buf.clone(), hash.clone())?;
+
+            file_hash_pairs.push(result);
+
+            // Handle per-file output if requested
+            if self.per_file {
+                write_per_file_hash(&entry_path_buf, &hash, self.algo)?;
+            }
+        }
+
+        // Progress tracking finishes automatically
+
+        // Postcondition assertions (Tiger Style: minimum 2 per function)
+        assert_eq!(
+            file_hash_pairs.len(),
+            matching_entries.len(),
+            "Hash result count should match matching entries count"
+        );
+        assert!(
+            file_hash_pairs.iter().all(|pair| !pair.hash().is_empty()),
+            "All hash results should be non-empty"
+        );
+
+        // Handle output (per-file already handled in loop above)
+        if !self.per_file {
+            if let Some(output_path) = self.hash_output {
+                // Write to output file
+                let output_format = self.format.unwrap_or(OutputFormat::Text);
+                let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
+                let formatted_output = format_output_with_pretty(
+                    &convert_to_basic_pairs(file_hash_pairs.clone()),
+                    output_format,
+                    self.pretty,
+                    path_mode,
+                );
+                std::fs::write(output_path, formatted_output).map_err(|e| {
+                    CheckleError::FileOpenError {
+                        path: output_path.to_path_buf(),
+                        source: e,
+                    }
+                })?;
+            } else if self.pretty {
+                // Pretty table output
+                display_pretty_table(&file_hash_pairs)?;
+            } else {
+                // Standard output
+                let output_format = self.format.unwrap_or(OutputFormat::Text);
+                let path_mode = PathDisplayMode::from_flag(self.absolute_paths);
+                let formatted_output = format_output_with_pretty(
+                    &convert_to_basic_pairs(file_hash_pairs),
+                    output_format,
+                    false,
+                    path_mode,
+                );
+                print!("{formatted_output}");
+            }
         }
 
         Ok(())

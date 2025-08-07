@@ -21,6 +21,15 @@ _|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|
 
 checkle (v0.2.0)
 ------------------------------------------------------------
+⚠️  CRITICAL: DO NOT USE FOR STANDARD CHECKSUMS
+
+This project is an unsuccessful prototype that will produce different hashes
+than `md5sum` and `sha256sum` for all files larger than 1MB. `checkle` is thus
+incompatible with standard MD5/SHA256 checksum utilities.
+
+Please use standard time-tested tools like `md5sum` or `sha256sum` instead.
+------------------------------------------------------------
+
 A `checksum` utility for the multicore age. `checkle` implements a Merkle hash
 digest tree with parallelized nodes to progressively hash large files in small
 chunks. It can be used to hash single files, hash lists of files, and generate
