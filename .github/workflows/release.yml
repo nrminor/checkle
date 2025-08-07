@@ -30,15 +30,7 @@ jobs:
         run: |
           gh release create "${{ github.ref_name }}" \
             --title "Release ${{ github.ref_name }}" \
-            --notes "## Release ${{ github.ref_name }}
-            
-This release includes SIMD-optimized binaries for improved performance on modern CPUs.
-
-### Binary Types
-- **Standard binaries**: Built with stable Rust, maximum compatibility
-- **SIMD binaries**: Built with nightly Rust and SIMD optimizations, ~10-20x faster for hash validation
-
-Choose SIMD binaries if your CPU supports AVX2 (Intel/AMD from 2013+) or NEON (all ARM64)."
+            --notes "## Release ${{ github.ref_name }}"
 
   build-release:
     name: Build Release
